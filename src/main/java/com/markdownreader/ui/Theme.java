@@ -1,11 +1,11 @@
 package com.markdownreader.ui;
 
-/** Temas visuais suportados pelo apresentador. */
+/** Visual themes supported by the viewer. */
 public enum Theme {
     LIGHT,
     DARK;
 
-    /** Retorna o tema oposto ao atual. */
+    /** Returns the opposite of the current theme. */
     public Theme toggled() {
         return this == LIGHT ? DARK : LIGHT;
     }

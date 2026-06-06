@@ -47,7 +47,7 @@ import java.util.Optional;
 import java.util.prefs.Preferences;
 
 /**
- * Monta e controla a interface principal do apresentador de Markdown.
+ * Builds and controls the main UI of the Markdown viewer.
  */
 public final class MainView {
 
@@ -64,7 +64,7 @@ public final class MainView {
     private final BorderPane root = new BorderPane();
     private final WebView webView = new WebView();
     private final ListView<Heading> tocList = new ListView<>();
-    private final Label statusLabel = new Label("Nenhum documento aberto");
+    private final Label statusLabel = new Label("No document open");
     private final Label zoomLabel = new Label("100%");
     private final VBox sidebar = new VBox();
     private final StackPane welcomePane = new StackPane();
@@ -83,11 +83,11 @@ public final class MainView {
     private long currentFileTimestamp;
     private FileWatcher fileWatcher;
 
-    /** Texto Markdown atualmente carregado (fonte de verdade para edição/salvar). */
+    /** Currently loaded Markdown text (source of truth for editing/saving). */
     private String currentMarkdown = "";
     private boolean editMode = false;
     private boolean dirty = false;
-    /** Evita marcar o documento como modificado ao popular o editor por código. */
+    /** Prevents marking the document as modified when populating the editor from code. */
     private boolean suppressEditorListener = false;
 
     public MainView(Stage stage) {
@@ -126,24 +126,24 @@ public final class MainView {
     }
 
     private Node buildToolbar() {
-        Button openBtn = iconButton("📂", "Abrir documento  (Ctrl+O)", e -> openFileDialog());
-        Button reloadBtn = iconButton("↻", "Recarregar  (Ctrl+R)", e -> reloadCurrent());
-        Button sidebarBtn = iconButton("☰", "Mostrar/ocultar sumário  (Ctrl+B)", e -> toggleSidebar());
+        Button openBtn = iconButton("📂", "Open document  (Ctrl+O)", e -> openFileDialog());
+        Button reloadBtn = iconButton("↻", "Reload  (Ctrl+R)", e -> reloadCurrent());
+        Button sidebarBtn = iconButton("☰", "Show/hide table of contents  (Ctrl+B)", e -> toggleSidebar());
 
-        Button newBtn = iconButton("✚", "Novo documento  (Ctrl+N)", e -> newDocument());
-        Button editBtn = iconButton("✎", "Editar texto  (Ctrl+E)", e -> toggleEditMode());
+        Button newBtn = iconButton("✚", "New document  (Ctrl+N)", e -> newDocument());
+        Button editBtn = iconButton("✎", "Edit text  (Ctrl+E)", e -> toggleEditMode());
         editBtn.setId("edit-button");
-        Button saveBtn = iconButton("💾", "Salvar  (Ctrl+S)", e -> save());
-        Button focusModeBtn = iconButton("⛶", "Ocultar editor – visualização completa  (F11)", e -> toggleFocusMode());
+        Button saveBtn = iconButton("💾", "Save  (Ctrl+S)", e -> save());
+        Button focusModeBtn = iconButton("⛶", "Hide editor – full preview  (F11)", e -> toggleFocusMode());
         focusModeBtn.setId("focus-mode-button");
 
-        Button zoomOutBtn = iconButton("−", "Diminuir zoom  (Ctrl+-)", e -> changeScale(-SCALE_STEP));
-        Button zoomInBtn = iconButton("+", "Aumentar zoom  (Ctrl++)", e -> changeScale(SCALE_STEP));
+        Button zoomOutBtn = iconButton("−", "Zoom out  (Ctrl+-)", e -> changeScale(-SCALE_STEP));
+        Button zoomInBtn = iconButton("+", "Zoom in  (Ctrl++)", e -> changeScale(SCALE_STEP));
         zoomLabel.getStyleClass().add("zoom-label");
         zoomLabel.setOnMouseClicked(e -> resetScale());
-        Tooltip.install(zoomLabel, new Tooltip("Clique para redefinir o zoom (100%)"));
+        Tooltip.install(zoomLabel, new Tooltip("Click to reset zoom (100%)"));
 
-        Button themeBtn = iconButton(themeGlyph(), "Alternar tema claro/escuro  (Ctrl+T)", e -> toggleTheme());
+        Button themeBtn = iconButton(themeGlyph(), "Toggle light/dark theme  (Ctrl+T)", e -> toggleTheme());
         themeBtn.setId("theme-button");
 
         Region spacer = new Region();
@@ -172,25 +172,25 @@ public final class MainView {
 
         editorArea.getStyleClass().add("editor-area");
         editorArea.setWrapText(true);
-        editorArea.setPromptText("Digite seu Markdown aqui…");
+        editorArea.setPromptText("Type your Markdown here…");
         editorArea.textProperty().addListener((obs, old, txt) -> onEditorTextChanged(txt));
 
-        // Atualiza o preview com um pequeno atraso para não re-renderizar a cada tecla.
+        // Updates the preview with a small delay to avoid re-rendering on every keystroke.
         previewDebounce.setOnFinished(e -> renderMarkdown(currentMarkdown));
 
-        // Em modo leitura, o SplitPane contém apenas o preview (largura total).
-        // Ao editar, o editor é inserido à esquerda.
+        // In read mode, the SplitPane contains only the preview (full width).
+        // When editing, the editor is inserted on the left.
         centerSplit.getItems().setAll(centerStack);
         centerSplit.getStyleClass().add("editor-split");
         return centerSplit;
     }
 
     private Node buildSidebar() {
-        Label header = new Label("Sumário");
+        Label header = new Label("Table of Contents");
         header.getStyleClass().add("sidebar-header");
 
         tocList.getStyleClass().add("toc-list");
-        tocList.setPlaceholder(new Label("Sem títulos"));
+        tocList.setPlaceholder(new Label("No headings"));
         tocList.setCellFactory(list -> new TocCell());
         tocList.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) -> {
             if (sel != null && !sel.id().isEmpty()) {
@@ -220,9 +220,9 @@ public final class MainView {
         icon.getStyleClass().add("welcome-icon");
         Label title = new Label("Markdown Reader");
         title.getStyleClass().add("welcome-title");
-        Label subtitle = new Label("Abra um arquivo .md ou arraste-o para esta janela");
+        Label subtitle = new Label("Open a .md file or drag it onto this window");
         subtitle.getStyleClass().add("welcome-subtitle");
-        Button openBtn = new Button("Abrir documento");
+        Button openBtn = new Button("Open document");
         openBtn.getStyleClass().add("primary-button");
         openBtn.setOnAction(e -> openFileDialog());
 
@@ -232,7 +232,7 @@ public final class MainView {
         welcomePane.getStyleClass().add("welcome-pane");
         welcomePane.setVisible(true);
 
-        // Mostra o documento de boas-vindas embutido também no WebView (atrás).
+        // Also shows the embedded welcome document in the WebView (behind).
         loadEmbeddedSample();
     }
 
@@ -243,10 +243,10 @@ public final class MainView {
             return;
         }
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Abrir documento Markdown");
+        chooser.setTitle("Open Markdown document");
         chooser.getExtensionFilters().addAll(
                 new FileChooser.ExtensionFilter("Markdown", "*.md", "*.markdown", "*.mdown", "*.mkd"),
-                new FileChooser.ExtensionFilter("Todos os arquivos", "*.*"));
+                new FileChooser.ExtensionFilter("All files", "*.*"));
 
         String last = prefs.get("lastDir", System.getProperty("user.home"));
         File lastDir = new File(last);
@@ -276,7 +276,7 @@ public final class MainView {
             updateStatus(file, markdown);
             watchFile(file);
         } catch (IOException ex) {
-            statusLabel.setText("Erro ao ler: " + file.getName() + " (" + ex.getMessage() + ")");
+            statusLabel.setText("Error reading: " + file.getName() + " (" + ex.getMessage() + ")");
         }
     }
 
@@ -305,11 +305,11 @@ public final class MainView {
                 syncEditorText(md);
             }
         } catch (IOException ignored) {
-            // amostra é opcional
+            // sample is optional
         }
     }
 
-    // ------------------------------------------------------------- edição
+    // ------------------------------------------------------------- editing
 
     private void toggleEditMode() {
         setEditMode(!editMode);
@@ -347,21 +347,21 @@ public final class MainView {
         updateTitle();
     }
 
-    /** Define o texto do editor sem disparar o ciclo de "modificado". */
+    /** Sets the editor text without triggering the "modified" cycle. */
     private void syncEditorText(String txt) {
         suppressEditorListener = true;
         editorArea.setText(txt);
         suppressEditorListener = false;
     }
 
-    /** Salva o texto atual no arquivo aberto; pede um destino se não houver. */
+    /** Saves the current text to the open file; prompts for a destination if none exists. */
     private void save() {
         String content = editMode ? editorArea.getText() : currentMarkdown;
         File target = currentFile;
         if (target == null) {
             target = chooseSaveFile();
             if (target == null) {
-                return; // usuário cancelou
+                return; // user cancelled
             }
         }
         try {
@@ -376,16 +376,16 @@ public final class MainView {
             updateStatus(target, content);
             watchFile(target);
         } catch (IOException ex) {
-            statusLabel.setText("Erro ao salvar: " + target.getName() + " (" + ex.getMessage() + ")");
+            statusLabel.setText("Error saving: " + target.getName() + " (" + ex.getMessage() + ")");
         }
     }
 
     private File chooseSaveFile() {
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Salvar documento Markdown");
+        chooser.setTitle("Save Markdown document");
         chooser.getExtensionFilters().add(
                 new FileChooser.ExtensionFilter("Markdown", "*.md", "*.markdown", "*.mdown", "*.mkd"));
-        chooser.setInitialFileName("sem-titulo.md");
+        chooser.setInitialFileName("untitled.md");
 
         String last = prefs.get("lastDir", System.getProperty("user.home"));
         File lastDir = new File(last);
@@ -395,7 +395,7 @@ public final class MainView {
         return chooser.showSaveDialog(stage);
     }
 
-    /** Cria um documento vazio já em modo de edição. */
+    /** Creates an empty document already in edit mode. */
     private void newDocument() {
         if (!confirmDiscardChanges()) {
             return;
@@ -412,14 +412,14 @@ public final class MainView {
         renderMarkdown("");
         welcomePane.setVisible(false);
         setEditMode(true);
-        statusLabel.setText("Novo documento (não salvo)");
+        statusLabel.setText("New document (unsaved)");
         updateTitle();
     }
 
     /**
-     * Quando há edições não salvas, pergunta se o usuário quer salvar, descartar
-     * ou cancelar. Retorna {@code true} se a ação que substitui o conteúdo atual
-     * pode prosseguir.
+     * When there are unsaved edits, asks whether the user wants to save, discard,
+     * or cancel. Returns {@code true} if the action that replaces the current
+     * content may proceed.
      */
     private boolean confirmDiscardChanges() {
         if (!dirty) {
@@ -427,14 +427,14 @@ public final class MainView {
         }
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
         alert.initOwner(stage);
-        alert.setTitle("Edições não salvas");
-        String name = currentFile != null ? currentFile.getName() : "documento sem título";
-        alert.setHeaderText("Há alterações não salvas em " + name + ".");
-        alert.setContentText("O que você deseja fazer?");
+        alert.setTitle("Unsaved edits");
+        String name = currentFile != null ? currentFile.getName() : "untitled document";
+        alert.setHeaderText("There are unsaved changes in " + name + ".");
+        alert.setContentText("What would you like to do?");
 
-        ButtonType saveBtn = new ButtonType("Salvar", ButtonBar.ButtonData.YES);
-        ButtonType discardBtn = new ButtonType("Descartar", ButtonBar.ButtonData.NO);
-        ButtonType cancelBtn = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
+        ButtonType saveBtn = new ButtonType("Save", ButtonBar.ButtonData.YES);
+        ButtonType discardBtn = new ButtonType("Discard", ButtonBar.ButtonData.NO);
+        ButtonType cancelBtn = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
         alert.getButtonTypes().setAll(saveBtn, discardBtn, cancelBtn);
 
         Optional<ButtonType> choice = alert.showAndWait();
@@ -443,16 +443,16 @@ public final class MainView {
         }
         if (choice.get() == saveBtn) {
             save();
-            // Se o salvamento foi cancelado (ex.: "Salvar como" abortado), não prossegue.
+            // If saving was cancelled (e.g. "Save as" aborted), don't proceed.
             return !dirty;
         }
-        return true; // Descartar
+        return true; // Discard
     }
 
     private void updateTitle() {
-        String name = currentFile != null ? currentFile.getName() : "Sem título";
+        String name = currentFile != null ? currentFile.getName() : "Untitled";
         String mark = dirty ? "● " : "";
-        String mode = editMode ? "  [edição]" : "";
+        String mode = editMode ? "  [edit]" : "";
         stage.setTitle(mark + name + mode + " — Markdown Reader");
     }
 
@@ -469,7 +469,7 @@ public final class MainView {
         }
     }
 
-    // ------------------------------------------------------------- theme/zoom
+    // ------------------------------------------------------------ theme/zoom
 
     private void toggleTheme() {
         theme = theme.toggled();
@@ -488,7 +488,7 @@ public final class MainView {
     }
 
     private String themeGlyph() {
-        return theme == Theme.DARK ? "☀" : "☾"; // sol / lua
+        return theme == Theme.DARK ? "☀" : "☾"; // sun / moon
     }
 
     private void changeScale(double delta) {
@@ -507,8 +507,8 @@ public final class MainView {
     }
 
     private void rerenderCurrent() {
-        // Re-renderiza o conteúdo em memória (preserva edições não salvas);
-        // diferente de reloadCurrent(), que relê o arquivo do disco.
+        // Re-renders in-memory content (preserves unsaved edits);
+        // unlike reloadCurrent(), which re-reads the file from disk.
         renderMarkdown(currentMarkdown);
     }
 
@@ -555,37 +555,37 @@ public final class MainView {
     // ------------------------------------------------------------- helpers
 
     private void scrollToAnchor(String id) {
-        // Escapa aspas simples no id para o JS.
+        // Escapes single quotes in the id for JS.
         String safe = id.replace("\\", "\\\\").replace("'", "\\'");
         String js = "var el = document.getElementById('" + safe + "');"
                 + "if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }";
         try {
             webView.getEngine().executeScript(js);
         } catch (Exception ignored) {
-            // documento ainda carregando
+            // document still loading
         }
     }
 
     private void updateStatus(File file, String markdown) {
         int words = markdown.isBlank() ? 0 : markdown.trim().split("\\s+").length;
         int lines = markdown.isEmpty() ? 0 : (int) markdown.lines().count();
-        statusLabel.setText("%s  •  %d palavras  •  %d linhas"
+        statusLabel.setText("%s  •  %d words  •  %d lines"
                 .formatted(file.getAbsolutePath(), words, lines));
     }
 
     private void registerShortcuts() {
         root.sceneProperty().addListener((obs, oldScene, scene) -> {
             if (scene != null) {
-                // Filtros no nível da cena (fase de captura): rodam ANTES de o WebView
-                // tratar o evento nativamente. Sem isso, nem os atalhos de teclado nem
-                // o zoom por Ctrl+scroll disparam enquanto o WebView está em foco.
+                // Scene-level filters (capture phase): run BEFORE the WebView
+                // handles the event natively. Without this, neither keyboard shortcuts nor
+                // Ctrl+scroll zoom fire while the WebView is focused.
                 scene.addEventFilter(KeyEvent.KEY_PRESSED, this::handleShortcut);
                 scene.addEventFilter(ScrollEvent.SCROLL, this::handleScrollZoom);
             }
         });
     }
 
-    /** Zoom com Ctrl + roda do mouse. Rolagem sem Ctrl segue normal (não consome). */
+    /** Zoom with Ctrl + mouse wheel. Scrolling without Ctrl proceeds normally (not consumed). */
     private void handleScrollZoom(ScrollEvent e) {
         if (e.isControlDown() && e.getDeltaY() != 0) {
             changeScale(e.getDeltaY() > 0 ? SCALE_STEP : -SCALE_STEP);
@@ -594,9 +594,9 @@ public final class MainView {
     }
 
     /**
-     * Trata os atalhos de teclado. Aceita as várias teclas físicas que produzem
-     * {@code +} e {@code -} (linha numérica e teclado numérico) para que o zoom
-     * funcione independentemente do layout do teclado.
+     * Handles keyboard shortcuts. Accepts the various physical keys that produce
+     * {@code +} and {@code -} (number row and numpad) so that zoom works
+     * regardless of keyboard layout.
      */
     private void handleShortcut(KeyEvent e) {
         if (e.getCode() == KeyCode.F11 && !e.isShortcutDown() && !e.isAltDown() && !e.isShiftDown()) {
@@ -604,7 +604,7 @@ public final class MainView {
             e.consume();
             return;
         }
-        if (!e.isShortcutDown()) { // Ctrl no Windows/Linux, Cmd no macOS
+        if (!e.isShortcutDown()) { // Ctrl on Windows/Linux, Cmd on macOS
             return;
         }
         switch (e.getCode()) {
@@ -619,7 +619,7 @@ public final class MainView {
             case E -> toggleEditMode();
             case S -> save();
             default -> {
-                return; // não é um atalho conhecido: não consome o evento
+                return; // not a known shortcut: don't consume the event
             }
         }
         e.consume();
@@ -667,7 +667,7 @@ public final class MainView {
         }
         fileWatcher = new FileWatcher(file, () -> {
             long ts = file.lastModified();
-            // Não recarrega por cima de edições não salvas.
+            // Do not reload over unsaved edits.
             if (ts != currentFileTimestamp && !dirty) {
                 Platform.runLater(this::reloadCurrent);
             }
@@ -694,7 +694,7 @@ public final class MainView {
         return Math.max(min, Math.min(max, v));
     }
 
-    /** Célula do sumário com recuo proporcional ao nível do título. */
+    /** TOC cell with indentation proportional to the heading level. */
     private static final class TocCell extends ListCell<Heading> {
         @Override
         protected void updateItem(Heading item, boolean empty) {

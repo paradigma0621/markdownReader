@@ -3,10 +3,10 @@ package com.markdownreader.markdown;
 import java.util.List;
 
 /**
- * Resultado da renderização de um documento Markdown.
+ * Result of rendering a Markdown document.
  *
- * @param html     fragmento HTML do conteúdo
- * @param headings títulos encontrados, na ordem do documento (para o sumário)
+ * @param html     HTML fragment of the content
+ * @param headings headings found, in document order (for the table of contents)
  */
 public record RenderResult(String html, List<Heading> headings) {
 }

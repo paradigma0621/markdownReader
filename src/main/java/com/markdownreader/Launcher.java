@@ -3,10 +3,10 @@ package com.markdownreader;
 import javafx.application.Application;
 
 /**
- * Ponto de entrada "puro" (não estende {@link Application}).
+ * "Pure" entry point (does not extend {@link Application}).
  * <p>
- * Necessário para que a aplicação JavaFX rode tanto a partir do JAR "fat"
- * (shade) quanto pelo classpath sem o erro
+ * Required so that the JavaFX application runs both from the "fat" JAR
+ * (shade) and from the classpath without the error
  * "JavaFX runtime components are missing".
  */
 public final class Launcher {

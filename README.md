@@ -1,100 +1,100 @@
 # Markdown Reader 📝
 
-Apresentador estilizado de documentos **Markdown**, escrito em **Java 21** + **JavaFX 21**.
-Converte Markdown (GitHub Flavored) em HTML bonito e o exibe num `WebView`, com tema
-claro/escuro, sumário navegável, zoom e recarregamento automático.
+A styled **Markdown** document viewer written in **Java 21** + **JavaFX 21**.
+Converts Markdown (GitHub Flavored) into beautiful HTML and displays it in a `WebView`,
+with light/dark theme, navigable table of contents, zoom, and automatic reload.
 
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![JavaFX](https://img.shields.io/badge/JavaFX-21-blue)
 ![Maven](https://img.shields.io/badge/Maven-3.9-red)
 
-## ✨ Recursos
+## ✨ Features
 
-| Recurso | Descrição |
+| Feature | Description |
 |---|---|
-| **GFM completo** | tabelas, listas de tarefas, strikethrough, notas de rodapé, autolinks, emojis, tipografia |
-| **Tema claro/escuro** | alternável em tempo real (`Ctrl+T`), preferência persistida |
-| **Sumário navegável** | extraído dos títulos; clique para rolar até a seção |
+| **Full GFM** | tables, task lists, strikethrough, footnotes, autolinks, emojis, typography |
+| **Light/dark theme** | switchable in real time (`Ctrl+T`), preference persisted |
+| **Navigable TOC** | extracted from headings; click to scroll to section |
 | **Zoom** | `Ctrl + scroll`, `Ctrl++`, `Ctrl+-`, `Ctrl+0` (reset) |
-| **Recarregamento automático** | reabre o arquivo ao detectar alteração no disco |
-| **Arrastar e soltar** | solte um `.md` na janela para abrir |
-| **Syntax highlighting** | via highlight.js embutido (funciona offline) |
-| **Botão "voltar ao topo"** | aparece ao rolar |
+| **Auto-reload** | reopens the file when a change is detected on disk |
+| **Drag and drop** | drop a `.md` file onto the window to open it |
+| **Syntax highlighting** | via bundled highlight.js (works offline) |
+| **"Back to top" button** | appears when scrolling |
 
-## 🚀 Como executar
+## 🚀 How to run
 
-Requer **JDK 21** e **Maven**. A forma mais simples:
+Requires **JDK 21** and **Maven**. The simplest way:
 
 ```bash
 ./run.sh
 ```
 
-O script detecta automaticamente um JDK 21 instalado via SDKMAN. Alternativamente:
+The script automatically detects a JDK 21 installed via SDKMAN. Alternatively:
 
 ```bash
-# Aponte o JAVA_HOME para um JDK 21 e rode:
+# Point JAVA_HOME to a JDK 21 and run:
 export JAVA_HOME="$HOME/.sdkman/candidates/java/21.0.9-amzn"
 mvn clean javafx:run
 ```
 
-Abrir um arquivo direto pela linha de comando:
+Open a file directly from the command line:
 
 ```bash
-mvn javafx:run -Djavafx.args="caminho/para/arquivo.md"
+mvn javafx:run -Djavafx.args="path/to/file.md"
 ```
 
-## 📦 Gerar JAR executável
+## 📦 Build executable JAR
 
 ```bash
 mvn clean package
 java -jar target/markdown-reader-1.0.0.jar
 ```
 
-> O JAR "fat" inclui as dependências Java, mas **não** os binários nativos do
-> JavaFX. Para rodar o JAR é necessário um JDK que inclua o JavaFX, ou apontar o
-> `--module-path` para o SDK do JavaFX. Para uso geral, prefira `mvn javafx:run`.
+> The "fat" JAR includes Java dependencies, but **not** the native JavaFX binaries.
+> To run the JAR you need a JDK that includes JavaFX, or point the
+> `--module-path` to the JavaFX SDK. For general use, prefer `mvn javafx:run`.
 
-## ⌨️ Atalhos
+## ⌨️ Keyboard shortcuts
 
-| Atalho | Ação |
+| Shortcut | Action |
 |---|---|
-| `Ctrl+O` | Abrir documento |
-| `Ctrl+R` | Recarregar |
-| `Ctrl+T` | Alternar tema |
-| `Ctrl+B` | Mostrar/ocultar sumário |
+| `Ctrl+O` | Open document |
+| `Ctrl+R` | Reload |
+| `Ctrl+T` | Toggle theme |
+| `Ctrl+B` | Show/hide table of contents |
 | `Ctrl++` / `Ctrl+-` | Zoom in / out |
-| `Ctrl+0` | Redefinir zoom |
+| `Ctrl+0` | Reset zoom |
 | `Ctrl + scroll` | Zoom |
 
-## 🏗️ Estrutura
+## 🏗️ Structure
 
 ```
 src/main/java/com/markdownreader/
-├── Launcher.java                  ponto de entrada
-├── App.java                       Application JavaFX (Scene/Stage)
+├── Launcher.java                  entry point
+├── App.java                       JavaFX Application (Scene/Stage)
 ├── markdown/
-│   ├── MarkdownRenderer.java      Markdown -> HTML (flexmark) + extração de títulos
-│   ├── HtmlPageBuilder.java       embrulha o HTML com CSS + highlight.js
-│   ├── RenderResult.java          html + títulos
-│   └── Heading.java               título do sumário
+│   ├── MarkdownRenderer.java      Markdown -> HTML (flexmark) + heading extraction
+│   ├── HtmlPageBuilder.java       wraps HTML with CSS + highlight.js
+│   ├── RenderResult.java          html + headings
+│   └── Heading.java               table of contents entry
 └── ui/
-    ├── MainView.java              toolbar, sidebar, WebView, ações
-    ├── FileWatcher.java           recarregamento automático
-    └── Theme.java                 tema claro/escuro
+    ├── MainView.java              toolbar, sidebar, WebView, actions
+    ├── FileWatcher.java           automatic reload
+    └── Theme.java                 light/dark theme
 
 src/main/resources/
-├── css/app.css                    estilo da interface JavaFX
-├── web/markdown.css               estilo do conteúdo renderizado
-└── sample/welcome.md              documento de boas-vindas
+├── css/app.css                    JavaFX UI stylesheet
+├── web/markdown.css               rendered content stylesheet
+└── sample/welcome.md              welcome document
 ```
 
-## 🛠️ Tecnologias
+## 🛠️ Technologies
 
-- [JavaFX](https://openjfx.io/) 21 — interface e `WebView`
-- [flexmark-java](https://github.com/vsch/flexmark-java) — parser/render Markdown
-- [highlight.js](https://highlightjs.org/) — realce de sintaxe (embutido, offline)
-- [twemoji](https://github.com/jdecked/twemoji) — emojis SVG coloridos (embutidos, offline)
+- [JavaFX](https://openjfx.io/) 21 — UI and `WebView`
+- [flexmark-java](https://github.com/vsch/flexmark-java) — Markdown parser/renderer
+- [highlight.js](https://highlightjs.org/) — syntax highlighting (bundled, offline)
+- [twemoji](https://github.com/jdecked/twemoji) — colored SVG emojis (bundled, offline)
 
-## 📄 Licença
+## 📄 License
 
 MIT

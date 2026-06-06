@@ -8,41 +8,41 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Substitui emojis Unicode no HTML por imagens SVG coloridas (estilo twemoji),
- * embutidas inline como {@code data:} URI a partir de recursos empacotados no
- * próprio aplicativo — portanto <strong>sem dependência de internet</strong>.
+ * Replaces Unicode emojis in HTML with colored SVG images (twemoji style),
+ * inlined as {@code data:} URIs from resources bundled in the application —
+ * therefore <strong>without any internet dependency</strong>.
  *
- * <p>O motivo de fazer isso em Java — e não com o {@code twemoji.js} dentro do
- * {@code WebView} — é que o motor WebKit/JavaScriptCore embutido no JavaFX não
- * lida de forma confiável com emojis do plano astral (codepoints {@code >= U+10000},
- * que em UTF-16 são pares substitutos): o regex do twemoji simplesmente não os
- * casa. Aqui a String Java está íntegra e iteramos por <em>code points</em>, de
- * modo que astrais e BMP recebem o mesmo tratamento.
+ * <p>The reason this is done in Java — rather than with {@code twemoji.js} inside
+ * the {@code WebView} — is that the WebKit/JavaScriptCore engine embedded in JavaFX
+ * does not reliably handle astral-plane emojis (codepoints {@code >= U+10000},
+ * which in UTF-16 are surrogate pairs): twemoji's regex simply does not match them.
+ * Here the Java String is intact and we iterate by <em>code points</em>, so
+ * astral and BMP characters receive the same treatment.
  *
- * <p>Os SVGs ficam em {@code /emoji/svg/<codepoints>.svg} no classpath, seguindo
- * a convenção de nomes do twemoji: as sequências são unidas pelos codepoints em
- * hexadecimal separados por {@code '-'}, removendo o seletor de variação
- * {@code U+FE0F} quando não há ZWJ ({@code U+200D}) na sequência. Emojis sem SVG
- * empacotado degradam graciosamente para o próprio caractere de texto.
+ * <p>SVGs are located at {@code /emoji/svg/<codepoints>.svg} on the classpath,
+ * following twemoji's naming convention: sequences are joined by codepoints in
+ * hexadecimal separated by {@code '-'}, removing the variation selector
+ * {@code U+FE0F} when there is no ZWJ ({@code U+200D}) in the sequence. Emojis
+ * without a bundled SVG degrade gracefully to the original text character.
  */
 public final class EmojiImageRenderer {
 
     private static final int ZWJ = 0x200D;       // zero-width joiner
-    private static final int VS16 = 0xFE0F;      // variation selector-16 (apresentação emoji)
+    private static final int VS16 = 0xFE0F;      // variation selector-16 (emoji presentation)
     private static final int KEYCAP = 0x20E3;    // combining enclosing keycap
 
     private static final String RESOURCE_DIR = "/emoji/svg/";
 
-    /** Cache: nome do arquivo (sem extensão) -> data URI, ou {@code ""} se ausente. */
+    /** Cache: file name (without extension) -> data URI, or {@code ""} if absent. */
     private final Map<String, String> dataUriCache = new ConcurrentHashMap<>();
 
     /**
-     * Percorre o fragmento HTML e troca emojis por {@code <img class="emoji">},
-     * ignorando o conteúdo dentro de tags ({@code <...>}) para não tocar em
-     * atributos nem em nomes de elementos.
+     * Walks the HTML fragment and replaces emojis with {@code <img class="emoji">},
+     * ignoring content inside tags ({@code <...>}) to avoid touching
+     * attributes or element names.
      *
-     * @param html fragmento HTML (pode ser {@code null})
-     * @return HTML com emojis convertidos em imagens
+     * @param html HTML fragment (may be {@code null})
+     * @return HTML with emojis converted to images
      */
     public String render(String html) {
         if (html == null || html.isEmpty()) {
@@ -85,10 +85,10 @@ public final class EmojiImageRenderer {
     }
 
     /**
-     * Decide se a sequência iniciada em {@code i} deve ser tratada como emoji.
-     * Aceita: emojis com apresentação padrão emoji; emojis "texto" qualificados
-     * por {@code U+FE0F}; indicadores regionais (bandeiras); e bases de keycap
-     * ({@code 0-9 # *}) seguidas de {@code U+FE0F}.
+     * Decides whether the sequence starting at {@code i} should be treated as an emoji.
+     * Accepts: emojis with default emoji presentation; "text" emojis qualified
+     * by {@code U+FE0F}; regional indicators (flags); and keycap bases
+     * ({@code 0-9 # *}) followed by {@code U+FE0F}.
      */
     private static boolean startsEmoji(String s, int i, int cp) {
         if (Character.isEmojiPresentation(cp) || isRegionalIndicator(cp)) {
@@ -103,10 +103,10 @@ public final class EmojiImageRenderer {
     }
 
     /**
-     * Consome uma sequência completa de emoji (base + seletor de variação,
-     * modificadores de tom de pele, keycap, par de bandeira e sequências ZWJ).
+     * Consumes a complete emoji sequence (base + variation selector,
+     * skin tone modifiers, keycap, flag pair, and ZWJ sequences).
      *
-     * @return índice (em char) imediatamente após a sequência
+     * @return index (in chars) immediately after the sequence
      */
     private static int consumeCluster(String s, int i) {
         int len = s.length();
@@ -114,7 +114,7 @@ public final class EmojiImageRenderer {
         int firstCp = s.codePointAt(pos);
         pos += Character.charCount(firstCp);
 
-        // Bandeira: dois indicadores regionais consecutivos.
+        // Flag: two consecutive regional indicators.
         if (isRegionalIndicator(firstCp) && pos < len) {
             int second = s.codePointAt(pos);
             if (isRegionalIndicator(second)) {
@@ -131,7 +131,7 @@ public final class EmojiImageRenderer {
                 if (after < len && Character.isEmoji(s.codePointAt(after))) {
                     pos = after + Character.charCount(s.codePointAt(after));
                 } else {
-                    break; // ZWJ solto: não engole
+                    break; // loose ZWJ: don't consume
                 }
             } else {
                 break;
@@ -141,14 +141,14 @@ public final class EmojiImageRenderer {
     }
 
     /**
-     * Monta o {@code <img>} com o SVG embutido. Se o SVG não estiver empacotado,
-     * mantém o caractere de emoji original (degradação graciosa).
+     * Builds the {@code <img>} with the embedded SVG. If the SVG is not bundled,
+     * keeps the original emoji character (graceful degradation).
      */
     private void appendImage(StringBuilder out, String s, int start, int end) {
         String raw = s.substring(start, end);
         String dataUri = dataUriFor(toFileName(raw));
         if (dataUri.isEmpty()) {
-            out.append(raw); // sem asset: mantém o texto
+            out.append(raw); // no asset: keep as text
             return;
         }
         out.append("<img class=\"emoji\" draggable=\"false\" alt=\"")
@@ -158,7 +158,7 @@ public final class EmojiImageRenderer {
            .append("\" />");
     }
 
-    /** Carrega o SVG do classpath e devolve um {@code data:} URI base64 (cacheado). */
+    /** Loads the SVG from the classpath and returns a base64 {@code data:} URI (cached). */
     private String dataUriFor(String fileName) {
         return dataUriCache.computeIfAbsent(fileName, name -> {
             byte[] svg = readResource(RESOURCE_DIR + name + ".svg");
@@ -178,8 +178,8 @@ public final class EmojiImageRenderer {
     }
 
     /**
-     * Nome de arquivo no estilo twemoji: codepoints em hex unidos por {@code '-'};
-     * remove {@code U+FE0F} se a sequência não contiver ZWJ.
+     * twemoji-style file name: codepoints in hex joined by {@code '-'};
+     * removes {@code U+FE0F} if the sequence does not contain ZWJ.
      */
     private static String toFileName(String raw) {
         boolean hasZwj = raw.indexOf(ZWJ) >= 0;

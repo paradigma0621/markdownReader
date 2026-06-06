@@ -1,78 +1,78 @@
 # Markdown Reader 📝
 
-Bem-vindo ao **Markdown Reader** — um apresentador de documentos Markdown
-escrito em **Java 21** + **JavaFX**, com renderização totalmente estilizada.
+Welcome to **Markdown Reader** — a styled Markdown document viewer
+written in **Java 21** + **JavaFX**, with fully styled rendering.
 
-> Abra um arquivo com `Ctrl+O`, arraste um `.md` para a janela, ou alterne o
-> tema com `Ctrl+T`. Este próprio documento é um exemplo dos recursos suportados.
+> Open a file with `Ctrl+O`, drag a `.md` onto the window, or toggle the
+> theme with `Ctrl+T`. This document itself is an example of the supported features.
 
 ---
 
-## ✨ Recursos
+## ✨ Features
 
-- Conversão **GitHub Flavored Markdown** → HTML estilizado
-- Tema **claro** e **escuro** (`Ctrl+T`)
-- **Sumário** navegável na barra lateral (`Ctrl+B`)
-- **Zoom** com `Ctrl + scroll`, `Ctrl++` / `Ctrl+-` / `Ctrl+0`
-- **Recarregamento automático** ao salvar o arquivo no editor
-- Arrastar e soltar arquivos
+- **GitHub Flavored Markdown** → styled HTML conversion
+- **Light** and **dark** theme (`Ctrl+T`)
+- Navigable **Table of Contents** in the sidebar (`Ctrl+B`)
+- **Zoom** with `Ctrl + scroll`, `Ctrl++` / `Ctrl+-` / `Ctrl+0`
+- **Auto-reload** when saving the file in your editor
+- Drag and drop files
 
-## 🧩 Formatação básica
+## 🧩 Basic formatting
 
-Texto em *itálico*, **negrito**, ***ambos***, ~~riscado~~, `código inline`
-e até <kbd>Ctrl</kbd> + <kbd>O</kbd> com teclas.
+Text in *italic*, **bold**, ***both***, ~~strikethrough~~, `inline code`
+and even <kbd>Ctrl</kbd> + <kbd>O</kbd> with key tags.
 
-Links: [site do projeto](https://example.com) e autolinks https://github.com.
+Links: [project site](https://example.com) and autolinks https://github.com.
 
-## ✅ Listas de tarefas
+## ✅ Task lists
 
-- [x] Renderizar Markdown
-- [x] Aplicar estilo
-- [ ] Conquistar o mundo
+- [x] Render Markdown
+- [x] Apply styling
+- [ ] Conquer the world
 
-## 🔢 Lista ordenada
+## 🔢 Ordered list
 
-1. Primeiro passo
-2. Segundo passo
+1. First step
+2. Second step
    1. Sub-item A
    2. Sub-item B
-3. Terceiro passo
+3. Third step
 
-## 💬 Citação
+## 💬 Blockquote
 
-> "Qualquer tecnologia suficientemente avançada é indistinguível de mágica."
+> "Any sufficiently advanced technology is indistinguishable from magic."
 > — Arthur C. Clarke
 
-## 📊 Tabela
+## 📊 Table
 
-| Recurso            | Atalho      | Status |
+| Feature            | Shortcut    | Status |
 |--------------------|-------------|:------:|
-| Abrir arquivo      | `Ctrl+O`    |   ✅   |
-| Alternar tema      | `Ctrl+T`    |   ✅   |
-| Mostrar sumário    | `Ctrl+B`    |   ✅   |
-| Aumentar zoom      | `Ctrl++`    |   ✅   |
+| Open file          | `Ctrl+O`    |   ✅   |
+| Toggle theme       | `Ctrl+T`    |   ✅   |
+| Show TOC           | `Ctrl+B`    |   ✅   |
+| Zoom in            | `Ctrl++`    |   ✅   |
 
-## 💻 Bloco de código
+## 💻 Code block
 
 ```java
 public record Greeting(String name) {
     public String message() {
-        return "Olá, %s! Bem-vindo ao Markdown Reader.".formatted(name);
+        return "Hello, %s! Welcome to Markdown Reader.".formatted(name);
     }
 }
 ```
 
 ```bash
-# Executar a aplicação
+# Run the application
 mvn clean javafx:run
 ```
 
-## 📝 Nota de rodapé
+## 📝 Footnote
 
-O flexmark suporta notas de rodapé.[^1]
+flexmark supports footnotes.[^1]
 
-[^1]: Esta é a nota de rodapé renderizada no fim do documento.
+[^1]: This is the footnote rendered at the end of the document.
 
 ---
 
-Feito com ☕ e JavaFX.
+Made with ☕ and JavaFX.
