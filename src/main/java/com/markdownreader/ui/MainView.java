@@ -4,16 +4,22 @@ import com.markdownreader.markdown.Heading;
 import com.markdownreader.markdown.HtmlPageBuilder;
 import com.markdownreader.markdown.MarkdownRenderer;
 import com.markdownreader.markdown.RenderResult;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
@@ -29,12 +35,14 @@ import javafx.scene.layout.VBox;
 import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Optional;
 import java.util.prefs.Preferences;
 
 /**
@@ -60,6 +68,11 @@ public final class MainView {
     private final VBox sidebar = new VBox();
     private final StackPane welcomePane = new StackPane();
 
+    private final TextArea editorArea = new TextArea();
+    private final StackPane centerStack = new StackPane();
+    private final SplitPane centerSplit = new SplitPane();
+    private final PauseTransition previewDebounce = new PauseTransition(Duration.millis(200));
+
     private final DoubleProperty fontScale = new SimpleDoubleProperty(1.0);
     private Theme theme;
     private boolean sidebarVisible = true;
@@ -67,6 +80,13 @@ public final class MainView {
     private File currentFile;
     private long currentFileTimestamp;
     private FileWatcher fileWatcher;
+
+    /** Texto Markdown atualmente carregado (fonte de verdade para edição/salvar). */
+    private String currentMarkdown = "";
+    private boolean editMode = false;
+    private boolean dirty = false;
+    /** Evita marcar o documento como modificado ao popular o editor por código. */
+    private boolean suppressEditorListener = false;
 
     public MainView(Stage stage) {
         this.stage = stage;
@@ -78,6 +98,11 @@ public final class MainView {
         showWelcome();
         registerShortcuts();
         enableDragAndDrop();
+        stage.setOnCloseRequest(e -> {
+            if (!confirmDiscardChanges()) {
+                e.consume();
+            }
+        });
     }
 
     public Region getRoot() {
@@ -103,6 +128,11 @@ public final class MainView {
         Button reloadBtn = iconButton("↻", "Recarregar  (Ctrl+R)", e -> reloadCurrent());
         Button sidebarBtn = iconButton("☰", "Mostrar/ocultar sumário  (Ctrl+B)", e -> toggleSidebar());
 
+        Button newBtn = iconButton("✚", "Novo documento  (Ctrl+N)", e -> newDocument());
+        Button editBtn = iconButton("✎", "Editar texto  (Ctrl+E)", e -> toggleEditMode());
+        editBtn.setId("edit-button");
+        Button saveBtn = iconButton("💾", "Salvar  (Ctrl+S)", e -> save());
+
         Button zoomOutBtn = iconButton("−", "Diminuir zoom  (Ctrl+-)", e -> changeScale(-SCALE_STEP));
         Button zoomInBtn = iconButton("+", "Aumentar zoom  (Ctrl++)", e -> changeScale(SCALE_STEP));
         zoomLabel.getStyleClass().add("zoom-label");
@@ -120,6 +150,7 @@ public final class MainView {
 
         HBox bar = new HBox(8,
                 openBtn, reloadBtn, sidebarBtn,
+                separator(), newBtn, editBtn, saveBtn,
                 separator(), zoomOutBtn, zoomLabel, zoomInBtn,
                 spacer, title, separator(), themeBtn);
         bar.getStyleClass().add("toolbar");
@@ -132,9 +163,22 @@ public final class MainView {
         webView.setContextMenuEnabled(false);
         webView.getEngine().setJavaScriptEnabled(true);
 
-        StackPane center = new StackPane(webView, welcomePane);
-        center.getStyleClass().add("content-area");
-        return center;
+        centerStack.getChildren().setAll(webView, welcomePane);
+        centerStack.getStyleClass().add("content-area");
+
+        editorArea.getStyleClass().add("editor-area");
+        editorArea.setWrapText(true);
+        editorArea.setPromptText("Digite seu Markdown aqui…");
+        editorArea.textProperty().addListener((obs, old, txt) -> onEditorTextChanged(txt));
+
+        // Atualiza o preview com um pequeno atraso para não re-renderizar a cada tecla.
+        previewDebounce.setOnFinished(e -> renderMarkdown(currentMarkdown));
+
+        // Em modo leitura, o SplitPane contém apenas o preview (largura total).
+        // Ao editar, o editor é inserido à esquerda.
+        centerSplit.getItems().setAll(centerStack);
+        centerSplit.getStyleClass().add("editor-split");
+        return centerSplit;
     }
 
     private Node buildSidebar() {
@@ -191,6 +235,9 @@ public final class MainView {
     // ------------------------------------------------------------- actions
 
     public void openFileDialog() {
+        if (!confirmDiscardChanges()) {
+            return;
+        }
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Abrir documento Markdown");
         chooser.getExtensionFilters().addAll(
@@ -214,11 +261,14 @@ public final class MainView {
             String markdown = Files.readString(file.toPath(), StandardCharsets.UTF_8);
             this.currentFile = file;
             this.currentFileTimestamp = file.lastModified();
+            this.currentMarkdown = markdown;
+            this.dirty = false;
             prefs.put("lastDir", file.getParent() == null ? "" : file.getParent());
 
             renderMarkdown(markdown);
+            syncEditorText(markdown);
             welcomePane.setVisible(false);
-            stage.setTitle(file.getName() + " — Markdown Reader");
+            updateTitle();
             updateStatus(file, markdown);
             watchFile(file);
         } catch (IOException ex) {
@@ -228,6 +278,9 @@ public final class MainView {
 
     private void reloadCurrent() {
         if (currentFile != null && currentFile.isFile()) {
+            if (!confirmDiscardChanges()) {
+                return;
+            }
             openFile(currentFile);
         }
     }
@@ -243,10 +296,170 @@ public final class MainView {
         try (var in = MainView.class.getResourceAsStream("/sample/welcome.md")) {
             if (in != null) {
                 String md = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                this.currentMarkdown = md;
                 renderMarkdown(md);
+                syncEditorText(md);
             }
         } catch (IOException ignored) {
             // amostra é opcional
+        }
+    }
+
+    // ------------------------------------------------------------- edição
+
+    private void toggleEditMode() {
+        setEditMode(!editMode);
+    }
+
+    private void setEditMode(boolean on) {
+        if (on == editMode) {
+            return;
+        }
+        editMode = on;
+        if (on) {
+            syncEditorText(currentMarkdown);
+            if (!centerSplit.getItems().contains(editorArea)) {
+                centerSplit.getItems().add(0, editorArea);
+                centerSplit.setDividerPositions(0.45);
+            }
+            welcomePane.setVisible(false);
+            editorArea.requestFocus();
+        } else {
+            centerSplit.getItems().remove(editorArea);
+        }
+        updateEditButton();
+        updateTitle();
+    }
+
+    private void onEditorTextChanged(String txt) {
+        if (suppressEditorListener) {
+            return;
+        }
+        currentMarkdown = txt;
+        dirty = true;
+        previewDebounce.playFromStart();
+        updateTitle();
+    }
+
+    /** Define o texto do editor sem disparar o ciclo de "modificado". */
+    private void syncEditorText(String txt) {
+        suppressEditorListener = true;
+        editorArea.setText(txt);
+        suppressEditorListener = false;
+    }
+
+    /** Salva o texto atual no arquivo aberto; pede um destino se não houver. */
+    private void save() {
+        String content = editMode ? editorArea.getText() : currentMarkdown;
+        File target = currentFile;
+        if (target == null) {
+            target = chooseSaveFile();
+            if (target == null) {
+                return; // usuário cancelou
+            }
+        }
+        try {
+            Files.writeString(target.toPath(), content, StandardCharsets.UTF_8);
+            currentFile = target;
+            currentMarkdown = content;
+            currentFileTimestamp = target.lastModified();
+            dirty = false;
+            prefs.put("lastDir", target.getParent() == null ? "" : target.getParent());
+            welcomePane.setVisible(false);
+            updateTitle();
+            updateStatus(target, content);
+            watchFile(target);
+        } catch (IOException ex) {
+            statusLabel.setText("Erro ao salvar: " + target.getName() + " (" + ex.getMessage() + ")");
+        }
+    }
+
+    private File chooseSaveFile() {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Salvar documento Markdown");
+        chooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("Markdown", "*.md", "*.markdown", "*.mdown", "*.mkd"));
+        chooser.setInitialFileName("sem-titulo.md");
+
+        String last = prefs.get("lastDir", System.getProperty("user.home"));
+        File lastDir = new File(last);
+        if (lastDir.isDirectory()) {
+            chooser.setInitialDirectory(lastDir);
+        }
+        return chooser.showSaveDialog(stage);
+    }
+
+    /** Cria um documento vazio já em modo de edição. */
+    private void newDocument() {
+        if (!confirmDiscardChanges()) {
+            return;
+        }
+        if (fileWatcher != null) {
+            fileWatcher.stop();
+            fileWatcher = null;
+        }
+        currentFile = null;
+        currentFileTimestamp = 0;
+        currentMarkdown = "";
+        dirty = false;
+        syncEditorText("");
+        renderMarkdown("");
+        welcomePane.setVisible(false);
+        setEditMode(true);
+        statusLabel.setText("Novo documento (não salvo)");
+        updateTitle();
+    }
+
+    /**
+     * Quando há edições não salvas, pergunta se o usuário quer salvar, descartar
+     * ou cancelar. Retorna {@code true} se a ação que substitui o conteúdo atual
+     * pode prosseguir.
+     */
+    private boolean confirmDiscardChanges() {
+        if (!dirty) {
+            return true;
+        }
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.initOwner(stage);
+        alert.setTitle("Edições não salvas");
+        String name = currentFile != null ? currentFile.getName() : "documento sem título";
+        alert.setHeaderText("Há alterações não salvas em " + name + ".");
+        alert.setContentText("O que você deseja fazer?");
+
+        ButtonType saveBtn = new ButtonType("Salvar", ButtonBar.ButtonData.YES);
+        ButtonType discardBtn = new ButtonType("Descartar", ButtonBar.ButtonData.NO);
+        ButtonType cancelBtn = new ButtonType("Cancelar", ButtonBar.ButtonData.CANCEL_CLOSE);
+        alert.getButtonTypes().setAll(saveBtn, discardBtn, cancelBtn);
+
+        Optional<ButtonType> choice = alert.showAndWait();
+        if (choice.isEmpty() || choice.get() == cancelBtn) {
+            return false;
+        }
+        if (choice.get() == saveBtn) {
+            save();
+            // Se o salvamento foi cancelado (ex.: "Salvar como" abortado), não prossegue.
+            return !dirty;
+        }
+        return true; // Descartar
+    }
+
+    private void updateTitle() {
+        String name = currentFile != null ? currentFile.getName() : "Sem título";
+        String mark = dirty ? "● " : "";
+        String mode = editMode ? "  [edição]" : "";
+        stage.setTitle(mark + name + mode + " — Markdown Reader");
+    }
+
+    private void updateEditButton() {
+        Node btn = root.lookup("#edit-button");
+        if (btn instanceof Button b) {
+            if (editMode) {
+                if (!b.getStyleClass().contains("active")) {
+                    b.getStyleClass().add("active");
+                }
+            } else {
+                b.getStyleClass().remove("active");
+            }
         }
     }
 
@@ -288,11 +501,9 @@ public final class MainView {
     }
 
     private void rerenderCurrent() {
-        if (currentFile != null && currentFile.isFile()) {
-            reloadCurrent();
-        } else {
-            loadEmbeddedSample();
-        }
+        // Re-renderiza o conteúdo em memória (preserva edições não salvas);
+        // diferente de reloadCurrent(), que relê o arquivo do disco.
+        renderMarkdown(currentMarkdown);
     }
 
     private void toggleSidebar() {
@@ -354,10 +565,13 @@ public final class MainView {
             case PLUS, ADD, EQUALS -> changeScale(SCALE_STEP);   // Ctrl++ / Ctrl+=
             case MINUS, SUBTRACT -> changeScale(-SCALE_STEP);    // Ctrl+-
             case DIGIT0, NUMPAD0 -> resetScale();                // Ctrl+0
+            case N -> newDocument();
             case O -> openFileDialog();
             case R -> reloadCurrent();
             case T -> toggleTheme();
             case B -> toggleSidebar();
+            case E -> toggleEditMode();
+            case S -> save();
             default -> {
                 return; // não é um atalho conhecido: não consome o evento
             }
@@ -384,7 +598,7 @@ public final class MainView {
         boolean done = false;
         if (db.hasFiles()) {
             File file = db.getFiles().get(0);
-            if (isMarkdown(file)) {
+            if (isMarkdown(file) && confirmDiscardChanges()) {
                 openFile(file);
                 done = true;
             }
@@ -407,7 +621,8 @@ public final class MainView {
         }
         fileWatcher = new FileWatcher(file, () -> {
             long ts = file.lastModified();
-            if (ts != currentFileTimestamp) {
+            // Não recarrega por cima de edições não salvas.
+            if (ts != currentFileTimestamp && !dirty) {
                 Platform.runLater(this::reloadCurrent);
             }
         });

@@ -135,6 +135,41 @@
     -fx-background-color: -bg;
 }
 
+/* --------------------------- Editor de texto --------------------------- */
+.editor-split {
+    -fx-background-color: -bg;
+    -fx-padding: 0;
+}
+.editor-split > .split-pane-divider {
+    -fx-background-color: -border;
+    -fx-padding: 0 1 0 1;
+}
+.editor-area {
+    -fx-background-color: -bg-alt;
+    -fx-border-color: transparent -border transparent transparent;
+    -fx-border-width: 0 1 0 0;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", "Menlo", monospace;
+    -fx-font-size: 14px;
+}
+.editor-area .content {
+    -fx-background-color: -bg-alt;
+}
+.editor-area, .editor-area .text-area {
+    -fx-text-fill: -text;
+}
+.editor-area .text {
+    -fx-fill: -text;
+}
+.editor-area:focused {
+    -fx-background-color: -bg-alt;
+}
+
+/* botão de edição ativo */
+.tool-button.active {
+    -fx-background-color: -selected;
+    -fx-text-fill: -accent;
+}
+
 /* sobreposição quando arrastando arquivo */
 .app-root.drag-active .content-area {
     -fx-border-color: -accent;
