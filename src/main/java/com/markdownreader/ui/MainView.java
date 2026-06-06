@@ -78,6 +78,11 @@ public final class MainView {
     private Theme theme;
     private boolean sidebarVisible = true;
     private boolean focusMode = false;
+    private boolean fullscreenMode = false;
+
+    /** Top/bottom chrome, kept so it can be detached/restored in fullscreen mode. */
+    private Node toolbar;
+    private Node statusBar;
 
     private File currentFile;
     private long currentFileTimestamp;
@@ -100,6 +105,10 @@ public final class MainView {
         showWelcome();
         registerShortcuts();
         enableDragAndDrop();
+        // Keep our layout in sync with the stage's fullscreen state, even when the
+        // user leaves fullscreen with the default ESC key rather than F12.
+        stage.fullScreenProperty().addListener((obs, was, isFull) -> applyFullscreenLayout(isFull));
+        stage.setFullScreenExitHint("Press F12 or ESC to exit fullscreen");
         stage.setOnCloseRequest(e -> {
             if (!confirmDiscardChanges()) {
                 e.consume();
@@ -119,10 +128,12 @@ public final class MainView {
 
     private void buildLayout() {
         root.getStyleClass().add("app-root");
-        root.setTop(buildToolbar());
+        toolbar = buildToolbar();
+        statusBar = buildStatusBar();
+        root.setTop(toolbar);
         root.setCenter(buildCenter());
         root.setLeft(buildSidebar());
-        root.setBottom(buildStatusBar());
+        root.setBottom(statusBar);
     }
 
     private Node buildToolbar() {
@@ -136,6 +147,8 @@ public final class MainView {
         Button saveBtn = iconButton("💾", "Save  (Ctrl+S)", e -> save());
         Button focusModeBtn = iconButton("⛶", "Hide editor – full preview  (F11)", e -> toggleFocusMode());
         focusModeBtn.setId("focus-mode-button");
+        Button fullscreenBtn = iconButton("⤢", "Fullscreen – markdown only  (F12)", e -> toggleFullscreen());
+        fullscreenBtn.setId("fullscreen-button");
 
         Button zoomOutBtn = iconButton("−", "Zoom out  (Ctrl+-)", e -> changeScale(-SCALE_STEP));
         Button zoomInBtn = iconButton("+", "Zoom in  (Ctrl++)", e -> changeScale(SCALE_STEP));
@@ -154,7 +167,7 @@ public final class MainView {
 
         HBox bar = new HBox(8,
                 openBtn, reloadBtn, sidebarBtn,
-                separator(), newBtn, editBtn, saveBtn, focusModeBtn,
+                separator(), newBtn, editBtn, saveBtn, focusModeBtn, fullscreenBtn,
                 separator(), zoomOutBtn, zoomLabel, zoomInBtn,
                 spacer, title, separator(), themeBtn);
         bar.getStyleClass().add("toolbar");
@@ -552,6 +565,56 @@ public final class MainView {
         }
     }
 
+    private void toggleFullscreen() {
+        // Driving the stage property triggers the fullScreenProperty listener,
+        // which performs the actual layout changes via applyFullscreenLayout().
+        stage.setFullScreen(!stage.isFullScreen());
+    }
+
+    /**
+     * Enters/exits "total fullscreen": OS fullscreen with every piece of chrome
+     * removed (toolbar, status bar, sidebar and editor), leaving only the rendered
+     * Markdown visible. Exiting restores the layout the user had before.
+     */
+    private void applyFullscreenLayout(boolean on) {
+        if (on == fullscreenMode) {
+            return;
+        }
+        fullscreenMode = on;
+        if (on) {
+            root.setTop(null);
+            root.setBottom(null);
+            root.setLeft(null);
+            centerSplit.getItems().remove(editorArea);
+            welcomePane.setVisible(false);
+            root.getStyleClass().add("fullscreen-mode");
+            webView.requestFocus();
+        } else {
+            root.setTop(toolbar);
+            root.setBottom(statusBar);
+            root.setLeft((!focusMode && sidebarVisible) ? sidebar : null);
+            if (editMode && !focusMode && !centerSplit.getItems().contains(editorArea)) {
+                centerSplit.getItems().add(0, editorArea);
+                centerSplit.setDividerPositions(0.45);
+            }
+            root.getStyleClass().remove("fullscreen-mode");
+        }
+        updateFullscreenButton();
+    }
+
+    private void updateFullscreenButton() {
+        Node btn = root.lookup("#fullscreen-button");
+        if (btn instanceof Button b) {
+            if (fullscreenMode) {
+                if (!b.getStyleClass().contains("active")) {
+                    b.getStyleClass().add("active");
+                }
+            } else {
+                b.getStyleClass().remove("active");
+            }
+        }
+    }
+
     // ------------------------------------------------------------- helpers
 
     private void scrollToAnchor(String id) {
@@ -601,6 +664,11 @@ public final class MainView {
     private void handleShortcut(KeyEvent e) {
         if (e.getCode() == KeyCode.F11 && !e.isShortcutDown() && !e.isAltDown() && !e.isShiftDown()) {
             toggleFocusMode();
+            e.consume();
+            return;
+        }
+        if (e.getCode() == KeyCode.F12 && !e.isShortcutDown() && !e.isAltDown() && !e.isShiftDown()) {
+            toggleFullscreen();
             e.consume();
             return;
         }
