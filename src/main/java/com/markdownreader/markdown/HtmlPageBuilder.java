@@ -64,7 +64,6 @@ public final class HtmlPageBuilder {
                     <article class="markdown-body">
                         %s
                     </article>
-                    <button id="top-btn" title="Back to top" aria-label="Back to top">&#8593;</button>
                     <script>%s</script>
                     <script>
                         document.addEventListener('DOMContentLoaded', function () {
@@ -73,13 +72,6 @@ public final class HtmlPageBuilder {
                                     try { hljs.highlightElement(block); } catch (e) {}
                                 });
                             }
-                            var btn = document.getElementById('top-btn');
-                            window.addEventListener('scroll', function () {
-                                btn.classList.toggle('visible', window.scrollY > 320);
-                            });
-                            btn.addEventListener('click', function () {
-                                window.scrollTo({ top: 0, behavior: 'smooth' });
-                            });
                         });
                     </script>
                 </body>

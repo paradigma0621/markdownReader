@@ -250,26 +250,6 @@ body {
     margin-bottom: 1.6em;
 }
 
-/* ----------------------------- Botão topo ----------------------------- */
-#top-btn {
-    position: fixed;
-    right: 26px;
-    bottom: 26px;
-    width: 44px;
-    height: 44px;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    background: var(--code-bg);
-    color: var(--fg);
-    font-size: 20px;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.25s ease, transform 0.15s ease;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-}
-#top-btn.visible { opacity: 0.92; }
-#top-btn:hover { transform: translateY(-2px); }
-
 /* ----------------------------- Scrollbar ----------------------------- */
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-thumb {
@@ -282,5 +262,5 @@ body {
 
 /* respeita preferência do SO, mas a classe no html tem prioridade */
 @media (prefers-reduced-motion: reduce) {
-    html, body, #top-btn { scroll-behavior: auto; transition: none; }
+    html, body { scroll-behavior: auto; transition: none; }
 }
