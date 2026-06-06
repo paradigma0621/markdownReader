@@ -17,8 +17,8 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
-import javafx.scene.input.KeyCode;
-import javafx.scene.input.KeyCombination;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.input.ScrollEvent;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -323,30 +323,45 @@ public final class MainView {
 
     private void registerShortcuts() {
         root.sceneProperty().addListener((obs, oldScene, scene) -> {
-            if (scene == null) {
-                return;
+            if (scene != null) {
+                // Filtro no nível da cena (fase de captura): roda ANTES de o WebView
+                // consumir o KEY_PRESSED. Sem isso, os atalhos — inclusive o zoom —
+                // não disparam enquanto o WebView está com o foco.
+                scene.addEventFilter(KeyEvent.KEY_PRESSED, this::handleShortcut);
             }
-            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+O"), this::openFileDialog);
-            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+R"), this::reloadCurrent);
-            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+T"), this::toggleTheme);
-            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+B"), this::toggleSidebar);
-            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+PLUS"), () -> changeScale(SCALE_STEP));
-            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+EQUALS"), () -> changeScale(SCALE_STEP));
-            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+MINUS"), () -> changeScale(-SCALE_STEP));
-            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+0"), this::resetScale);
         });
 
-        webView.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, e -> {
+        // Zoom com Ctrl + roda do mouse sobre o conteúdo.
+        webView.addEventFilter(ScrollEvent.SCROLL, e -> {
             if (e.isControlDown()) {
                 changeScale(e.getDeltaY() > 0 ? SCALE_STEP : -SCALE_STEP);
                 e.consume();
             }
         });
-        webView.setOnKeyPressed(e -> {
-            if (e.isControlDown() && (e.getCode() == KeyCode.PLUS || e.getCode() == KeyCode.EQUALS)) {
-                changeScale(SCALE_STEP);
+    }
+
+    /**
+     * Trata os atalhos de teclado. Aceita as várias teclas físicas que produzem
+     * {@code +} e {@code -} (linha numérica e teclado numérico) para que o zoom
+     * funcione independentemente do layout do teclado.
+     */
+    private void handleShortcut(KeyEvent e) {
+        if (!e.isShortcutDown()) { // Ctrl no Windows/Linux, Cmd no macOS
+            return;
+        }
+        switch (e.getCode()) {
+            case PLUS, ADD, EQUALS -> changeScale(SCALE_STEP);   // Ctrl++ / Ctrl+=
+            case MINUS, SUBTRACT -> changeScale(-SCALE_STEP);    // Ctrl+-
+            case DIGIT0, NUMPAD0 -> resetScale();                // Ctrl+0
+            case O -> openFileDialog();
+            case R -> reloadCurrent();
+            case T -> toggleTheme();
+            case B -> toggleSidebar();
+            default -> {
+                return; // não é um atalho conhecido: não consome o evento
             }
-        });
+        }
+        e.consume();
     }
 
     private void enableDragAndDrop() {
