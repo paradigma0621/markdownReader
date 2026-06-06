@@ -23,6 +23,7 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
+import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.ScrollEvent;
 import javafx.scene.input.TransferMode;
@@ -76,6 +77,7 @@ public final class MainView {
     private final DoubleProperty fontScale = new SimpleDoubleProperty(1.0);
     private Theme theme;
     private boolean sidebarVisible = true;
+    private boolean focusMode = false;
 
     private File currentFile;
     private long currentFileTimestamp;
@@ -132,6 +134,8 @@ public final class MainView {
         Button editBtn = iconButton("✎", "Editar texto  (Ctrl+E)", e -> toggleEditMode());
         editBtn.setId("edit-button");
         Button saveBtn = iconButton("💾", "Salvar  (Ctrl+S)", e -> save());
+        Button focusModeBtn = iconButton("⛶", "Ocultar editor – visualização completa  (F11)", e -> toggleFocusMode());
+        focusModeBtn.setId("focus-mode-button");
 
         Button zoomOutBtn = iconButton("−", "Diminuir zoom  (Ctrl+-)", e -> changeScale(-SCALE_STEP));
         Button zoomInBtn = iconButton("+", "Aumentar zoom  (Ctrl++)", e -> changeScale(SCALE_STEP));
@@ -150,7 +154,7 @@ public final class MainView {
 
         HBox bar = new HBox(8,
                 openBtn, reloadBtn, sidebarBtn,
-                separator(), newBtn, editBtn, saveBtn,
+                separator(), newBtn, editBtn, saveBtn, focusModeBtn,
                 separator(), zoomOutBtn, zoomLabel, zoomInBtn,
                 spacer, title, separator(), themeBtn);
         bar.getStyleClass().add("toolbar");
@@ -318,12 +322,14 @@ public final class MainView {
         editMode = on;
         if (on) {
             syncEditorText(currentMarkdown);
-            if (!centerSplit.getItems().contains(editorArea)) {
+            if (!focusMode && !centerSplit.getItems().contains(editorArea)) {
                 centerSplit.getItems().add(0, editorArea);
                 centerSplit.setDividerPositions(0.45);
             }
             welcomePane.setVisible(false);
-            editorArea.requestFocus();
+            if (!focusMode) {
+                editorArea.requestFocus();
+            }
         } else {
             centerSplit.getItems().remove(editorArea);
         }
@@ -508,7 +514,42 @@ public final class MainView {
 
     private void toggleSidebar() {
         sidebarVisible = !sidebarVisible;
-        root.setLeft(sidebarVisible ? sidebar : null);
+        if (!focusMode) {
+            root.setLeft(sidebarVisible ? sidebar : null);
+        }
+    }
+
+    private void toggleFocusMode() {
+        setFocusMode(!focusMode);
+    }
+
+    private void setFocusMode(boolean on) {
+        if (on == focusMode) {
+            return;
+        }
+        focusMode = on;
+        // Sidebar: hidden in focus mode, restored according to sidebarVisible when exiting
+        root.setLeft((!focusMode && sidebarVisible) ? sidebar : null);
+        if (focusMode) {
+            centerSplit.getItems().remove(editorArea);
+        } else if (editMode && !centerSplit.getItems().contains(editorArea)) {
+            centerSplit.getItems().add(0, editorArea);
+            centerSplit.setDividerPositions(0.45);
+        }
+        updateFocusModeButton();
+    }
+
+    private void updateFocusModeButton() {
+        Node btn = root.lookup("#focus-mode-button");
+        if (btn instanceof Button b) {
+            if (focusMode) {
+                if (!b.getStyleClass().contains("active")) {
+                    b.getStyleClass().add("active");
+                }
+            } else {
+                b.getStyleClass().remove("active");
+            }
+        }
     }
 
     // ------------------------------------------------------------- helpers
@@ -558,6 +599,11 @@ public final class MainView {
      * funcione independentemente do layout do teclado.
      */
     private void handleShortcut(KeyEvent e) {
+        if (e.getCode() == KeyCode.F11 && !e.isShortcutDown() && !e.isAltDown() && !e.isShiftDown()) {
+            toggleFocusMode();
+            e.consume();
+            return;
+        }
         if (!e.isShortcutDown()) { // Ctrl no Windows/Linux, Cmd no macOS
             return;
         }
