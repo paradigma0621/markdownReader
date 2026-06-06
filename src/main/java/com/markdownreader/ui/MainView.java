@@ -324,20 +324,21 @@ public final class MainView {
     private void registerShortcuts() {
         root.sceneProperty().addListener((obs, oldScene, scene) -> {
             if (scene != null) {
-                // Filtro no nível da cena (fase de captura): roda ANTES de o WebView
-                // consumir o KEY_PRESSED. Sem isso, os atalhos — inclusive o zoom —
-                // não disparam enquanto o WebView está com o foco.
+                // Filtros no nível da cena (fase de captura): rodam ANTES de o WebView
+                // tratar o evento nativamente. Sem isso, nem os atalhos de teclado nem
+                // o zoom por Ctrl+scroll disparam enquanto o WebView está em foco.
                 scene.addEventFilter(KeyEvent.KEY_PRESSED, this::handleShortcut);
+                scene.addEventFilter(ScrollEvent.SCROLL, this::handleScrollZoom);
             }
         });
+    }
 
-        // Zoom com Ctrl + roda do mouse sobre o conteúdo.
-        webView.addEventFilter(ScrollEvent.SCROLL, e -> {
-            if (e.isControlDown()) {
-                changeScale(e.getDeltaY() > 0 ? SCALE_STEP : -SCALE_STEP);
-                e.consume();
-            }
-        });
+    /** Zoom com Ctrl + roda do mouse. Rolagem sem Ctrl segue normal (não consome). */
+    private void handleScrollZoom(ScrollEvent e) {
+        if (e.isControlDown() && e.getDeltaY() != 0) {
+            changeScale(e.getDeltaY() > 0 ? SCALE_STEP : -SCALE_STEP);
+            e.consume();
+        }
     }
 
     /**
