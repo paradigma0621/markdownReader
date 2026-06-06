@@ -1,0 +1,437 @@
+package com.markdownreader.ui;
+
+import com.markdownreader.markdown.Heading;
+import com.markdownreader.markdown.HtmlPageBuilder;
+import com.markdownreader.markdown.MarkdownRenderer;
+import com.markdownreader.markdown.RenderResult;
+import javafx.application.Platform;
+import javafx.beans.property.DoubleProperty;
+import javafx.beans.property.SimpleDoubleProperty;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
+import javafx.scene.control.Tooltip;
+import javafx.scene.input.DragEvent;
+import javafx.scene.input.Dragboard;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCombination;
+import javafx.scene.input.TransferMode;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+import javafx.scene.web.WebView;
+import javafx.stage.FileChooser;
+import javafx.stage.Stage;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.List;
+import java.util.prefs.Preferences;
+
+/**
+ * Monta e controla a interface principal do apresentador de Markdown.
+ */
+public final class MainView {
+
+    private static final double MIN_SCALE = 0.6;
+    private static final double MAX_SCALE = 2.4;
+    private static final double SCALE_STEP = 0.1;
+
+    private final Stage stage;
+    private final Preferences prefs = Preferences.userNodeForPackage(MainView.class);
+
+    private final MarkdownRenderer renderer = new MarkdownRenderer();
+    private final HtmlPageBuilder pageBuilder = new HtmlPageBuilder();
+
+    private final BorderPane root = new BorderPane();
+    private final WebView webView = new WebView();
+    private final ListView<Heading> tocList = new ListView<>();
+    private final Label statusLabel = new Label("Nenhum documento aberto");
+    private final Label zoomLabel = new Label("100%");
+    private final VBox sidebar = new VBox();
+    private final StackPane welcomePane = new StackPane();
+
+    private final DoubleProperty fontScale = new SimpleDoubleProperty(1.0);
+    private Theme theme;
+    private boolean sidebarVisible = true;
+
+    private File currentFile;
+    private long currentFileTimestamp;
+    private FileWatcher fileWatcher;
+
+    public MainView(Stage stage) {
+        this.stage = stage;
+        this.theme = Theme.valueOf(prefs.get("theme", Theme.LIGHT.name()));
+        this.fontScale.set(prefs.getDouble("fontScale", 1.0));
+
+        buildLayout();
+        applyThemeToRoot();
+        showWelcome();
+        registerShortcuts();
+        enableDragAndDrop();
+    }
+
+    public Region getRoot() {
+        return root;
+    }
+
+    public void requestFocus() {
+        webView.requestFocus();
+    }
+
+    // ---------------------------------------------------------------- layout
+
+    private void buildLayout() {
+        root.getStyleClass().add("app-root");
+        root.setTop(buildToolbar());
+        root.setCenter(buildCenter());
+        root.setLeft(buildSidebar());
+        root.setBottom(buildStatusBar());
+    }
+
+    private Node buildToolbar() {
+        Button openBtn = iconButton("📂", "Abrir documento  (Ctrl+O)", e -> openFileDialog());
+        Button reloadBtn = iconButton("↻", "Recarregar  (Ctrl+R)", e -> reloadCurrent());
+        Button sidebarBtn = iconButton("☰", "Mostrar/ocultar sumário  (Ctrl+B)", e -> toggleSidebar());
+
+        Button zoomOutBtn = iconButton("−", "Diminuir zoom  (Ctrl+-)", e -> changeScale(-SCALE_STEP));
+        Button zoomInBtn = iconButton("+", "Aumentar zoom  (Ctrl++)", e -> changeScale(SCALE_STEP));
+        zoomLabel.getStyleClass().add("zoom-label");
+        zoomLabel.setOnMouseClicked(e -> resetScale());
+        Tooltip.install(zoomLabel, new Tooltip("Clique para redefinir o zoom (100%)"));
+
+        Button themeBtn = iconButton(themeGlyph(), "Alternar tema claro/escuro  (Ctrl+T)", e -> toggleTheme());
+        themeBtn.setId("theme-button");
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Label title = new Label("Markdown Reader");
+        title.getStyleClass().add("app-title");
+
+        HBox bar = new HBox(8,
+                openBtn, reloadBtn, sidebarBtn,
+                separator(), zoomOutBtn, zoomLabel, zoomInBtn,
+                spacer, title, separator(), themeBtn);
+        bar.getStyleClass().add("toolbar");
+        bar.setAlignment(Pos.CENTER_LEFT);
+        bar.setPadding(new Insets(8, 14, 8, 14));
+        return bar;
+    }
+
+    private Node buildCenter() {
+        webView.setContextMenuEnabled(false);
+        webView.getEngine().setJavaScriptEnabled(true);
+
+        StackPane center = new StackPane(webView, welcomePane);
+        center.getStyleClass().add("content-area");
+        return center;
+    }
+
+    private Node buildSidebar() {
+        Label header = new Label("Sumário");
+        header.getStyleClass().add("sidebar-header");
+
+        tocList.getStyleClass().add("toc-list");
+        tocList.setPlaceholder(new Label("Sem títulos"));
+        tocList.setCellFactory(list -> new TocCell());
+        tocList.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) -> {
+            if (sel != null && !sel.id().isEmpty()) {
+                scrollToAnchor(sel.id());
+            }
+        });
+        VBox.setVgrow(tocList, Priority.ALWAYS);
+
+        sidebar.getChildren().setAll(header, tocList);
+        sidebar.getStyleClass().add("sidebar");
+        sidebar.setPrefWidth(280);
+        sidebar.setMinWidth(220);
+        return sidebar;
+    }
+
+    private Node buildStatusBar() {
+        statusLabel.getStyleClass().add("status-label");
+        HBox bar = new HBox(statusLabel);
+        bar.getStyleClass().add("status-bar");
+        bar.setPadding(new Insets(5, 14, 5, 14));
+        bar.setAlignment(Pos.CENTER_LEFT);
+        return bar;
+    }
+
+    private void showWelcome() {
+        Label icon = new Label("📝");
+        icon.getStyleClass().add("welcome-icon");
+        Label title = new Label("Markdown Reader");
+        title.getStyleClass().add("welcome-title");
+        Label subtitle = new Label("Abra um arquivo .md ou arraste-o para esta janela");
+        subtitle.getStyleClass().add("welcome-subtitle");
+        Button openBtn = new Button("Abrir documento");
+        openBtn.getStyleClass().add("primary-button");
+        openBtn.setOnAction(e -> openFileDialog());
+
+        VBox box = new VBox(14, icon, title, subtitle, openBtn);
+        box.setAlignment(Pos.CENTER);
+        welcomePane.getChildren().setAll(box);
+        welcomePane.getStyleClass().add("welcome-pane");
+        welcomePane.setVisible(true);
+
+        // Mostra o documento de boas-vindas embutido também no WebView (atrás).
+        loadEmbeddedSample();
+    }
+
+    // ------------------------------------------------------------- actions
+
+    public void openFileDialog() {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Abrir documento Markdown");
+        chooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Markdown", "*.md", "*.markdown", "*.mdown", "*.mkd"),
+                new FileChooser.ExtensionFilter("Todos os arquivos", "*.*"));
+
+        String last = prefs.get("lastDir", System.getProperty("user.home"));
+        File lastDir = new File(last);
+        if (lastDir.isDirectory()) {
+            chooser.setInitialDirectory(lastDir);
+        }
+
+        File file = chooser.showOpenDialog(stage);
+        if (file != null) {
+            openFile(file);
+        }
+    }
+
+    public void openFile(File file) {
+        try {
+            String markdown = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            this.currentFile = file;
+            this.currentFileTimestamp = file.lastModified();
+            prefs.put("lastDir", file.getParent() == null ? "" : file.getParent());
+
+            renderMarkdown(markdown);
+            welcomePane.setVisible(false);
+            stage.setTitle(file.getName() + " — Markdown Reader");
+            updateStatus(file, markdown);
+            watchFile(file);
+        } catch (IOException ex) {
+            statusLabel.setText("Erro ao ler: " + file.getName() + " (" + ex.getMessage() + ")");
+        }
+    }
+
+    private void reloadCurrent() {
+        if (currentFile != null && currentFile.isFile()) {
+            openFile(currentFile);
+        }
+    }
+
+    private void renderMarkdown(String markdown) {
+        RenderResult result = renderer.render(markdown);
+        String page = pageBuilder.build(result.html(), theme, fontScale.get());
+        webView.getEngine().loadContent(page, "text/html");
+        tocList.getItems().setAll(result.headings());
+    }
+
+    private void loadEmbeddedSample() {
+        try (var in = MainView.class.getResourceAsStream("/sample/welcome.md")) {
+            if (in != null) {
+                String md = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                renderMarkdown(md);
+            }
+        } catch (IOException ignored) {
+            // amostra é opcional
+        }
+    }
+
+    // ------------------------------------------------------------- theme/zoom
+
+    private void toggleTheme() {
+        theme = theme.toggled();
+        prefs.put("theme", theme.name());
+        applyThemeToRoot();
+        rerenderCurrent();
+        Node btn = root.lookup("#theme-button");
+        if (btn instanceof Button b) {
+            b.setText(themeGlyph());
+        }
+    }
+
+    private void applyThemeToRoot() {
+        root.getStyleClass().removeAll("theme-light", "theme-dark");
+        root.getStyleClass().add(theme == Theme.DARK ? "theme-dark" : "theme-light");
+    }
+
+    private String themeGlyph() {
+        return theme == Theme.DARK ? "☀" : "☾"; // sol / lua
+    }
+
+    private void changeScale(double delta) {
+        double next = clamp(fontScale.get() + delta, MIN_SCALE, MAX_SCALE);
+        fontScale.set(Math.round(next * 100) / 100.0);
+        prefs.putDouble("fontScale", fontScale.get());
+        zoomLabel.setText(Math.round(fontScale.get() * 100) + "%");
+        rerenderCurrent();
+    }
+
+    private void resetScale() {
+        fontScale.set(1.0);
+        prefs.putDouble("fontScale", 1.0);
+        zoomLabel.setText("100%");
+        rerenderCurrent();
+    }
+
+    private void rerenderCurrent() {
+        if (currentFile != null && currentFile.isFile()) {
+            reloadCurrent();
+        } else {
+            loadEmbeddedSample();
+        }
+    }
+
+    private void toggleSidebar() {
+        sidebarVisible = !sidebarVisible;
+        root.setLeft(sidebarVisible ? sidebar : null);
+    }
+
+    // ------------------------------------------------------------- helpers
+
+    private void scrollToAnchor(String id) {
+        // Escapa aspas simples no id para o JS.
+        String safe = id.replace("\\", "\\\\").replace("'", "\\'");
+        String js = "var el = document.getElementById('" + safe + "');"
+                + "if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }";
+        try {
+            webView.getEngine().executeScript(js);
+        } catch (Exception ignored) {
+            // documento ainda carregando
+        }
+    }
+
+    private void updateStatus(File file, String markdown) {
+        int words = markdown.isBlank() ? 0 : markdown.trim().split("\\s+").length;
+        int lines = markdown.isEmpty() ? 0 : (int) markdown.lines().count();
+        statusLabel.setText("%s  •  %d palavras  •  %d linhas"
+                .formatted(file.getAbsolutePath(), words, lines));
+    }
+
+    private void registerShortcuts() {
+        root.sceneProperty().addListener((obs, oldScene, scene) -> {
+            if (scene == null) {
+                return;
+            }
+            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+O"), this::openFileDialog);
+            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+R"), this::reloadCurrent);
+            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+T"), this::toggleTheme);
+            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+B"), this::toggleSidebar);
+            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+PLUS"), () -> changeScale(SCALE_STEP));
+            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+EQUALS"), () -> changeScale(SCALE_STEP));
+            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+MINUS"), () -> changeScale(-SCALE_STEP));
+            scene.getAccelerators().put(KeyCombination.keyCombination("Ctrl+0"), this::resetScale);
+        });
+
+        webView.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, e -> {
+            if (e.isControlDown()) {
+                changeScale(e.getDeltaY() > 0 ? SCALE_STEP : -SCALE_STEP);
+                e.consume();
+            }
+        });
+        webView.setOnKeyPressed(e -> {
+            if (e.isControlDown() && (e.getCode() == KeyCode.PLUS || e.getCode() == KeyCode.EQUALS)) {
+                changeScale(SCALE_STEP);
+            }
+        });
+    }
+
+    private void enableDragAndDrop() {
+        root.setOnDragOver(this::onDragOver);
+        root.setOnDragDropped(this::onDragDropped);
+    }
+
+    private void onDragOver(DragEvent event) {
+        Dragboard db = event.getDragboard();
+        if (db.hasFiles() && isMarkdown(db.getFiles().get(0))) {
+            event.acceptTransferModes(TransferMode.COPY);
+            root.getStyleClass().add("drag-active");
+        }
+        event.consume();
+    }
+
+    private void onDragDropped(DragEvent event) {
+        Dragboard db = event.getDragboard();
+        boolean done = false;
+        if (db.hasFiles()) {
+            File file = db.getFiles().get(0);
+            if (isMarkdown(file)) {
+                openFile(file);
+                done = true;
+            }
+        }
+        root.getStyleClass().remove("drag-active");
+        event.setDropCompleted(done);
+        event.consume();
+    }
+
+    private static boolean isMarkdown(File file) {
+        String name = file.getName().toLowerCase();
+        return name.endsWith(".md") || name.endsWith(".markdown")
+                || name.endsWith(".mdown") || name.endsWith(".mkd")
+                || name.endsWith(".txt");
+    }
+
+    private void watchFile(File file) {
+        if (fileWatcher != null) {
+            fileWatcher.stop();
+        }
+        fileWatcher = new FileWatcher(file, () -> {
+            long ts = file.lastModified();
+            if (ts != currentFileTimestamp) {
+                Platform.runLater(this::reloadCurrent);
+            }
+        });
+        fileWatcher.start();
+    }
+
+    private Button iconButton(String glyph, String tooltip, javafx.event.EventHandler<javafx.event.ActionEvent> action) {
+        Button b = new Button(glyph);
+        b.getStyleClass().add("tool-button");
+        b.setTooltip(new Tooltip(tooltip));
+        b.setOnAction(action);
+        b.setFocusTraversable(false);
+        return b;
+    }
+
+    private Region separator() {
+        Region r = new Region();
+        r.getStyleClass().add("toolbar-separator");
+        return r;
+    }
+
+    private static double clamp(double v, double min, double max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    /** Célula do sumário com recuo proporcional ao nível do título. */
+    private static final class TocCell extends ListCell<Heading> {
+        @Override
+        protected void updateItem(Heading item, boolean empty) {
+            super.updateItem(item, empty);
+            if (empty || item == null) {
+                setText(null);
+                setGraphic(null);
+                getStyleClass().removeAll("toc-h1", "toc-h2", "toc-h3", "toc-h4", "toc-h5", "toc-h6");
+            } else {
+                setText(item.text());
+                setPadding(new Insets(4, 8, 4, 8 + (item.level() - 1) * 14));
+                getStyleClass().removeAll("toc-h1", "toc-h2", "toc-h3", "toc-h4", "toc-h5", "toc-h6");
+                getStyleClass().add("toc-h" + Math.min(item.level(), 6));
+            }
+        }
+    }
+}

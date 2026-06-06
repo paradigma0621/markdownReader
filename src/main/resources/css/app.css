@@ -1,0 +1,209 @@
+/* ============================================================
+   Markdown Reader — estilo da interface JavaFX
+   Temas aplicados via classe .theme-light / .theme-dark no root
+   ============================================================ */
+
+/* ---------- Tema CLARO (variáveis via -fx-* herdadas) ---------- */
+.app-root.theme-light {
+    -bg:        #ffffff;
+    -bg-alt:    #f6f8fa;
+    -bg-bar:    #f0f3f6;
+    -border:    #d8dee4;
+    -text:      #1f2328;
+    -text-dim:  #6b7280;
+    -accent:    #0969da;
+    -accent-fg: #ffffff;
+    -hover:     #eaeef2;
+    -selected:  #ddf4ff;
+}
+
+/* ---------- Tema ESCURO ---------- */
+.app-root.theme-dark {
+    -bg:        #0d1117;
+    -bg-alt:    #161b22;
+    -bg-bar:    #161b22;
+    -border:    #30363d;
+    -text:      #e6edf3;
+    -text-dim:  #8b949e;
+    -accent:    #2f81f7;
+    -accent-fg: #ffffff;
+    -hover:     #21262d;
+    -selected:  #1f2b3d;
+}
+
+.app-root {
+    -fx-background-color: -bg;
+    -fx-font-family: "Segoe UI", "Inter", "Roboto", "Helvetica Neue", sans-serif;
+}
+
+/* ---------------------------- Toolbar ---------------------------- */
+.toolbar {
+    -fx-background-color: -bg-bar;
+    -fx-border-color: transparent transparent -border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.app-title {
+    -fx-text-fill: -text-dim;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-letter-spacing: 0.5px;
+}
+
+.tool-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: -text;
+    -fx-font-size: 16px;
+    -fx-min-width: 34px;
+    -fx-min-height: 32px;
+    -fx-background-radius: 8px;
+    -fx-cursor: hand;
+    -fx-padding: 2 8 2 8;
+}
+.tool-button:hover {
+    -fx-background-color: -hover;
+}
+.tool-button:pressed {
+    -fx-background-color: -border;
+}
+
+.zoom-label {
+    -fx-text-fill: -text-dim;
+    -fx-font-size: 12px;
+    -fx-min-width: 44px;
+    -fx-alignment: center;
+    -fx-cursor: hand;
+}
+
+.toolbar-separator {
+    -fx-min-width: 1px;
+    -fx-pref-width: 1px;
+    -fx-min-height: 20px;
+    -fx-background-color: -border;
+    -fx-opacity: 0.8;
+}
+
+/* ---------------------------- Sidebar ---------------------------- */
+.sidebar {
+    -fx-background-color: -bg-alt;
+    -fx-border-color: transparent -border transparent transparent;
+    -fx-border-width: 0 1 0 0;
+    -fx-padding: 0;
+}
+
+.sidebar-header {
+    -fx-text-fill: -text-dim;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-padding: 14 16 8 16;
+}
+
+.toc-list {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0 6 8 6;
+}
+.toc-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -text;
+    -fx-font-size: 13px;
+    -fx-background-radius: 6px;
+    -fx-cursor: hand;
+}
+.toc-list .list-cell:hover {
+    -fx-background-color: -hover;
+}
+.toc-list .list-cell:selected {
+    -fx-background-color: -selected;
+    -fx-text-fill: -accent;
+}
+.toc-list .list-cell:empty {
+    -fx-background-color: transparent;
+}
+.toc-list .toc-h1 { -fx-font-weight: bold; -fx-font-size: 13.5px; }
+.toc-list .toc-h2 { -fx-font-weight: 600; }
+.toc-list .toc-h3 { -fx-text-fill: -text; }
+.toc-list .toc-h4,
+.toc-list .toc-h5,
+.toc-list .toc-h6 { -fx-text-fill: -text-dim; -fx-font-size: 12.5px; }
+
+/* ------------------------- Área de conteúdo ------------------------- */
+.content-area {
+    -fx-background-color: -bg;
+}
+.web-view {
+    -fx-background-color: -bg;
+}
+
+/* sobreposição quando arrastando arquivo */
+.app-root.drag-active .content-area {
+    -fx-border-color: -accent;
+    -fx-border-width: 3px;
+    -fx-border-style: segments(12, 8) line-cap round;
+    -fx-border-insets: 6px;
+    -fx-border-radius: 8px;
+}
+
+/* ---------------------------- Welcome ---------------------------- */
+.welcome-pane {
+    -fx-background-color: -bg;
+}
+.welcome-icon { -fx-font-size: 64px; }
+.welcome-title {
+    -fx-font-size: 26px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -text;
+}
+.welcome-subtitle {
+    -fx-font-size: 14px;
+    -fx-text-fill: -text-dim;
+}
+.primary-button {
+    -fx-background-color: -accent;
+    -fx-text-fill: -accent-fg;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-padding: 10 22 10 22;
+    -fx-background-radius: 8px;
+    -fx-cursor: hand;
+}
+.primary-button:hover { -fx-opacity: 0.9; }
+
+/* ---------------------------- Status bar ---------------------------- */
+.status-bar {
+    -fx-background-color: -bg-bar;
+    -fx-border-color: -border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+.status-label {
+    -fx-text-fill: -text-dim;
+    -fx-font-size: 11.5px;
+}
+
+/* ---------------------------- Tooltip ---------------------------- */
+.tooltip {
+    -fx-background-color: #1f2328;
+    -fx-text-fill: #ffffff;
+    -fx-font-size: 12px;
+    -fx-background-radius: 6px;
+    -fx-padding: 6 10 6 10;
+}
+
+/* ---------------------------- Scrollbars ---------------------------- */
+.scroll-bar {
+    -fx-background-color: transparent;
+}
+.scroll-bar .thumb {
+    -fx-background-color: -border;
+    -fx-background-radius: 6px;
+}
+.scroll-bar .thumb:hover {
+    -fx-background-color: -text-dim;
+}
+.scroll-bar .increment-button,
+.scroll-bar .decrement-button,
+.scroll-bar .increment-arrow,
+.scroll-bar .decrement-arrow {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
