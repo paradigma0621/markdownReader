@@ -11,20 +11,32 @@ import java.nio.charset.StandardCharsets;
  * Embrulha o fragmento HTML gerado pelo {@link MarkdownRenderer} em um
  * documento HTML completo e estilizado, pronto para o {@code WebView}.
  *
- * <p>Inclui o CSS do tema (claro/escuro), realce de sintaxe de código via
- * highlight.js (carregado por CDN — degrada graciosamente para código
- * estilizado, porém monocromático, quando offline) e um botão "voltar ao topo".
+ * <p>Tudo é embutido inline a partir de recursos empacotados no aplicativo, de
+ * modo que a renderização funciona <strong>100% offline</strong>: o CSS do tema
+ * (claro/escuro), o realce de sintaxe de código via highlight.js (script + tema)
+ * e os emojis convertidos em imagens SVG coloridas (twemoji) pelo
+ * {@link EmojiImageRenderer}.
+ *
+ * <p>O highlight.js é embutido em vez de carregado por CDN porque o WebView do
+ * JavaFX pode estar offline; os emojis são convertidos no lado Java porque o
+ * WebKit embutido não renderiza fontes de emoji coloridas nem casa emojis
+ * astrais via JS.
  */
 public final class HtmlPageBuilder {
 
-    private static final String HLJS_VERSION = "11.9.0";
-    private static final String HLJS_BASE =
-            "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@" + HLJS_VERSION + "/build";
+    // highlight.js v11.9.0 — script e temas empacotados em /web/hljs/.
 
     private final String baseCss;
+    private final String hljsJs;
+    private final String hlThemeLight;
+    private final String hlThemeDark;
+    private final EmojiImageRenderer emojiRenderer = new EmojiImageRenderer();
 
     public HtmlPageBuilder() {
         this.baseCss = readResource("/web/markdown.css");
+        this.hljsJs = readResource("/web/hljs/highlight.min.js");
+        this.hlThemeLight = readResource("/web/hljs/styles/github.min.css");
+        this.hlThemeDark = readResource("/web/hljs/styles/github-dark.min.css");
     }
 
     /**
@@ -35,8 +47,9 @@ public final class HtmlPageBuilder {
      */
     public String build(String bodyHtml, Theme theme, double fontScale) {
         String themeClass = theme == Theme.DARK ? "theme-dark" : "theme-light";
-        String hlStyle = theme == Theme.DARK ? "github-dark" : "github";
+        String hlTheme = theme == Theme.DARK ? hlThemeDark : hlThemeLight;
         long fontPercent = Math.round(fontScale * 100);
+        String body = emojiRenderer.render(bodyHtml);
 
         return """
                 <!DOCTYPE html>
@@ -44,7 +57,7 @@ public final class HtmlPageBuilder {
                 <head>
                     <meta charset="UTF-8" />
                     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                    <link rel="stylesheet" href="%s/styles/%s.min.css" />
+                    <style>%s</style>
                     <style>%s</style>
                     <style>:root { font-size: %d%%; }</style>
                 </head>
@@ -53,7 +66,7 @@ public final class HtmlPageBuilder {
                         %s
                     </article>
                     <button id="top-btn" title="Voltar ao topo" aria-label="Voltar ao topo">&#8593;</button>
-                    <script src="%s/highlight.min.js"></script>
+                    <script>%s</script>
                     <script>
                         document.addEventListener('DOMContentLoaded', function () {
                             if (window.hljs) {
@@ -72,7 +85,7 @@ public final class HtmlPageBuilder {
                     </script>
                 </body>
                 </html>
-                """.formatted(themeClass, HLJS_BASE, hlStyle, baseCss, fontPercent, bodyHtml, HLJS_BASE);
+                """.formatted(themeClass, hlTheme, baseCss, fontPercent, body, hljsJs);
     }
 
     private static String readResource(String path) {

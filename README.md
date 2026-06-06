@@ -18,7 +18,7 @@ claro/escuro, sumário navegável, zoom e recarregamento automático.
 | **Zoom** | `Ctrl + scroll`, `Ctrl++`, `Ctrl+-`, `Ctrl+0` (reset) |
 | **Recarregamento automático** | reabre o arquivo ao detectar alteração no disco |
 | **Arrastar e soltar** | solte um `.md` na janela para abrir |
-| **Syntax highlighting** | via highlight.js (CDN); offline o código fica estilizado em mono |
+| **Syntax highlighting** | via highlight.js embutido (funciona offline) |
 | **Botão "voltar ao topo"** | aparece ao rolar |
 
 ## 🚀 Como executar
@@ -92,7 +92,8 @@ src/main/resources/
 
 - [JavaFX](https://openjfx.io/) 21 — interface e `WebView`
 - [flexmark-java](https://github.com/vsch/flexmark-java) — parser/render Markdown
-- [highlight.js](https://highlightjs.org/) — realce de sintaxe (via CDN)
+- [highlight.js](https://highlightjs.org/) — realce de sintaxe (embutido, offline)
+- [twemoji](https://github.com/jdecked/twemoji) — emojis SVG coloridos (embutidos, offline)
 
 ## 📄 Licença
 
