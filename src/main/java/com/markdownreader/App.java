@@ -10,7 +10,7 @@ import java.io.File;
 import java.io.InputStream;
 
 /**
- * Aplicação JavaFX — apresentador estilizado de documentos Markdown.
+ * JavaFX application — styled Markdown document viewer.
  */
 public class App extends Application {
 
@@ -31,7 +31,7 @@ public class App extends Application {
         loadIcon(stage);
         stage.show();
 
-        // Abre arquivo passado por linha de comando, se houver.
+        // Opens file passed via command line, if any.
         var args = getParameters().getRaw();
         if (!args.isEmpty()) {
             File file = new File(args.get(0));
@@ -49,14 +49,14 @@ public class App extends Application {
                 stage.getIcons().add(new Image(in));
             }
         } catch (Exception ignored) {
-            // Ícone é opcional.
+            // Icon is optional.
         }
     }
 
     private static String resource(String path) {
         var url = App.class.getResource(path);
         if (url == null) {
-            throw new IllegalStateException("Recurso não encontrado: " + path);
+            throw new IllegalStateException("Resource not found: " + path);
         }
         return url.toExternalForm();
     }

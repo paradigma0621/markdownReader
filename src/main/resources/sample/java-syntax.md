@@ -1,28 +1,28 @@
-# Java — Amostra de Realce de Sintaxe
+# Java — Syntax Highlighting Sample
 
-Este documento exercita todos os tipos de token que o **highlight.js** colore em
-código Java: palavras-chave, tipos, strings, números, comentários, anotações,
-literais, operadores e muito mais. Útil para conferir o tema claro/escuro e a
-largura de blocos de código longos.
+This document exercises all the token types that **highlight.js** colors in
+Java code: keywords, types, strings, numbers, comments, annotations,
+literals, operators, and more. Useful for checking the light/dark theme and the
+width of long code blocks.
 
 ---
 
-## 1. Estrutura, imports e comentários
+## 1. Structure, imports and comments
 
 ```java
-// Comentário de linha única
+// Single-line comment
 /*
- * Comentário de bloco em várias linhas.
- * Documenta a intenção do arquivo.
+ * Multi-line block comment.
+ * Documents the intent of the file.
  */
 /**
- * Javadoc com {@code código inline}, {@link java.util.List} e tags.
+ * Javadoc with {@code inline code}, {@link java.util.List} and tags.
  *
  * @author  Lucas Favaro
  * @version 1.0
  * @since   17
  */
-package com.exemplo.realce;
+package com.example.highlight;
 
 import java.util.List;
 import java.util.Map;
@@ -33,95 +33,95 @@ import static java.lang.Math.max;
 
 ---
 
-## 2. Palavras-chave, modificadores e tipos primitivos
+## 2. Keywords, modifiers and primitive types
 
 ```java
-public abstract class Veiculo implements Comparable<Veiculo> {
+public abstract class Vehicle implements Comparable<Vehicle> {
 
-    // Constantes (literais numéricos de vários formatos)
-    public static final int    MAX_RODAS      = 18;
+    // Constants (numeric literals in various formats)
+    public static final int    MAX_WHEELS     = 18;
     private static final long   ID_BASE        = 9_223_372_036_854_775_807L;
-    protected static final double GRAVIDADE    = 9.81d;
-    private static final float  FATOR          = 1.5f;
+    protected static final double GRAVITY      = 9.81d;
+    private static final float  FACTOR         = 1.5f;
     private static final int    HEX            = 0xFF_EC_DE;
     private static final int    OCTAL          = 0_777;
-    private static final int    BINARIO        = 0b1010_0101;
-    private static final char   INICIAL        = 'V';
-    private static final boolean ATIVO         = true;
+    private static final int    BINARY         = 0b1010_0101;
+    private static final char   INITIAL        = 'V';
+    private static final boolean ACTIVE        = true;
 
-    // Tipos primitivos e wrappers
-    private byte   nivel;
-    private short  ano;
-    private int    rodas;
-    private long   chassi;
-    private float  consumo;
-    private double preco;
-    private boolean ligado;
-    private volatile transient String estadoInterno;
+    // Primitive types and wrappers
+    private byte   level;
+    private short  year;
+    private int    wheels;
+    private long   chassis;
+    private float  consumption;
+    private double price;
+    private boolean running;
+    private volatile transient String internalState;
 
-    public abstract void mover();
+    public abstract void move();
 }
 ```
 
 ---
 
-## 3. Strings, text blocks e escapes
+## 3. Strings, text blocks and escapes
 
 ```java
-public class Textos {
+public class Texts {
 
-    String simples   = "Olá, \"mundo\"!\n\tTabulado.";
-    String unicode   = "Acentuação e emoji 🚀";
-    char   barra     = '\\';
+    String simple    = "Hello, \"world\"!\n\tTabbed.";
+    String unicode   = "Accented characters and emoji 🚀";
+    char   backslash = '\\';
 
-    // Text block (multi-linha) — Java 15+
+    // Text block (multi-line) — Java 15+
     String json = """
             {
-                "nome": "Markdown Reader",
-                "versao": 1.0,
+                "name": "Markdown Reader",
+                "version": 1.0,
                 "offline": true,
-                "temas": ["claro", "escuro"]
+                "themes": ["light", "dark"]
             }
             """;
 
     String sql = """
-            SELECT id, nome, preco
-            FROM   produtos
-            WHERE  preco > 100.0
-            ORDER  BY nome ASC;
+            SELECT id, name, price
+            FROM   products
+            WHERE  price > 100.0
+            ORDER  BY name ASC;
             """;
 }
 ```
 
 ---
 
-## 4. Anotações, genéricos e métodos
+## 4. Annotations, generics and methods
 
 ```java
 @FunctionalInterface
-interface Transformacao<T, R> {
-    R aplicar(T entrada);
+interface Transformer<T, R> {
+    R apply(T input);
 }
 
 @Deprecated(since = "2.0", forRemoval = true)
 @SuppressWarnings({"unchecked", "rawtypes"})
-public class Repositorio<T extends Comparable<? super T>> {
+public class Repository<T extends Comparable<? super T>> {
 
-    private final List<T> itens;
+    private final List<T> items;
 
     @SafeVarargs
-    public Repositorio(T... iniciais) {
-        this.itens = new java.util.ArrayList<>(List.of(iniciais));
+    public Repository(T... initial) {
+        this.items = new java.util.ArrayList<>(List.of(initial));
     }
 
     @Override
     public String toString() {
-        return "Repositorio" + itens;
+        return "Repository" + items;
     }
 
-    public <R> List<R> mapear(Transformacao<? super T, ? extends R> fn) {
-        return itens.stream()
-                    .map(fn::aplicar)
+    public <R> List<R> map(Transformer<? super T, ? extends R> fn) {
+        return items.stream()
+                    .map(fn::apply)
                     .collect(Collectors.toList());
     }
 }
@@ -129,88 +129,88 @@ public class Repositorio<T extends Comparable<? super T>> {
 
 ---
 
-## 5. Controle de fluxo, switch expression e operadores
+## 5. Control flow, switch expression and operators
 
 ```java
-public final class Fluxo {
+public final class Flow {
 
-    enum Dia { SEG, TER, QUA, QUI, SEX, SAB, DOM }
+    enum Day { MON, TUE, WED, THU, FRI, SAT, SUN }
 
-    static String tipoDeDia(Dia dia) {
-        // switch expression com seta e yield (Java 14+)
-        return switch (dia) {
-            case SAB, DOM -> "fim de semana";
-            case SEX      -> {
-                String s = "quase ";
-                yield s + "sexta";
+    static String dayType(Day day) {
+        // switch expression with arrow and yield (Java 14+)
+        return switch (day) {
+            case SAT, SUN -> "weekend";
+            case FRI      -> {
+                String s = "almost ";
+                yield s + "Friday";
             }
-            default       -> "dia útil";
+            default       -> "weekday";
         };
     }
 
-    static int classificar(int n) {
+    static int classify(int n) {
         if (n > 0 && n % 2 == 0) {
             return 1;
         } else if (n < 0 || n == Integer.MIN_VALUE) {
             return -1;
         }
 
-        int soma = 0;
+        int sum = 0;
         for (int i = 0; i <= n; i++) {
-            soma += i << 1;       // deslocamento
+            sum += i << 1;       // shift
         }
-        while (soma > 100) {
-            soma >>= 1;
+        while (sum > 100) {
+            sum >>= 1;
         }
         do {
-            soma--;
-        } while (soma > 0);
+            sum--;
+        } while (sum > 0);
 
-        boolean teste = (soma == 0) ? true : false;
-        return teste ? 0 : soma & 0xF;
+        boolean test = (sum == 0) ? true : false;
+        return test ? 0 : sum & 0xF;
     }
 }
 ```
 
 ---
 
-## 6. Records, sealed, pattern matching e lambdas
+## 6. Records, sealed, pattern matching and lambdas
 
 ```java
-public sealed interface Forma permits Circulo, Retangulo {}
+public sealed interface Shape permits Circle, Rectangle {}
 
-public record Circulo(double raio)              implements Forma {}
-public record Retangulo(double base, double alt) implements Forma {}
+public record Circle(double radius)             implements Shape {}
+public record Rectangle(double base, double alt) implements Shape {}
 
-public class Geometria {
+public class Geometry {
 
-    public static double area(Forma forma) {
-        // Pattern matching em switch (Java 21)
-        return switch (forma) {
-            case Circulo c              -> Math.PI * c.raio() * c.raio();
-            case Retangulo(var b, var h) -> b * h;        // record pattern
+    public static double area(Shape shape) {
+        // Pattern matching in switch (Java 21)
+        return switch (shape) {
+            case Circle c              -> Math.PI * c.radius() * c.radius();
+            case Rectangle(var b, var h) -> b * h;        // record pattern
         };
     }
 
     public static void main(String[] args) {
-        var formas = List.of(new Circulo(2.0), new Retangulo(3.0, 4.0));
+        var shapes = List.of(new Circle(2.0), new Rectangle(3.0, 4.0));
 
-        formas.stream()
-              .map(Geometria::area)
+        shapes.stream()
+              .map(Geometry::area)
               .filter(a -> a > 5.0)
               .sorted()
-              .forEach(a -> System.out.printf("Área: %.2f%n", a));
+              .forEach(a -> System.out.printf("Area: %.2f%n", a));
 
-        // var, lambda e referência de método
-        Runnable tarefa = () -> System.out.println("Executando...");
-        tarefa.run();
+        // var, lambda and method reference
+        Runnable task = () -> System.out.println("Running...");
+        task.run();
     }
 }
 ```
 
 ---
 
-## 7. Exceções, try-with-resources e concorrência
+## 7. Exceptions, try-with-resources and concurrency
 
 ```java
 import java.io.BufferedReader;
@@ -219,22 +219,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 
-public class Recursos {
+public class Resources {
 
-    public String lerArquivo(Path caminho) throws IOException {
-        try (BufferedReader leitor = Files.newBufferedReader(caminho)) {
-            return leitor.lines().collect(Collectors.joining("\n"));
+    public String readFile(Path path) throws IOException {
+        try (BufferedReader reader = Files.newBufferedReader(path)) {
+            return reader.lines().collect(Collectors.joining("\n"));
         } catch (IOException e) {
-            throw new IllegalStateException("Falha ao ler: " + caminho, e);
+            throw new IllegalStateException("Failed to read: " + path, e);
         } finally {
-            System.out.println("Tentativa concluída.");
+            System.out.println("Attempt completed.");
         }
     }
 
-    public synchronized CompletableFuture<Integer> calcularAsync(int base) {
+    public synchronized CompletableFuture<Integer> computeAsync(int base) {
         return CompletableFuture
                 .supplyAsync(() -> base * base)
-                .thenApply(quad -> quad + 1)
+                .thenApply(sq -> sq + 1)
                 .exceptionally(ex -> -1);
     }
 }
@@ -242,7 +242,7 @@ public class Recursos {
 
 ---
 
-## 8. Código inline
+## 8. Inline code
 
-Você também pode realçar trechos curtos: a classe `ArrayList<String>`, o método
-`Collectors.toList()`, a palavra-chave `synchronized` ou o literal `0xFF_EC_DE`.
+You can also highlight short snippets: the class `ArrayList<String>`, the method
+`Collectors.toList()`, the keyword `synchronized`, or the literal `0xFF_EC_DE`.

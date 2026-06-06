@@ -1,11 +1,11 @@
 package com.markdownreader.markdown;
 
 /**
- * Um título extraído do documento, usado para montar o sumário navegável.
+ * A heading extracted from the document, used to build the navigable table of contents.
  *
- * @param level texto/nível (1 a 6) do título
- * @param text  texto visível do título
- * @param id    id da âncora HTML correspondente (para rolagem)
+ * @param level heading level (1 to 6)
+ * @param text  visible heading text
+ * @param id    corresponding HTML anchor id (for scrolling)
  */
 public record Heading(int level, String text, String id) {
 }

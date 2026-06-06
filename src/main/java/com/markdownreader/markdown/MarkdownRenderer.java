@@ -19,10 +19,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Converte texto Markdown (GitHub Flavored Markdown) em HTML.
+ * Converts Markdown text (GitHub Flavored Markdown) to HTML.
  *
- * <p>Habilita: tabelas, listas de tarefas, strikethrough, autolinks,
- * notas de rodapé, âncoras em títulos, emojis e tipografia inteligente.
+ * <p>Enables: tables, task lists, strikethrough, autolinks,
+ * footnotes, heading anchors, emojis, and smart typography.
  */
 public final class MarkdownRenderer {
 
@@ -44,9 +44,9 @@ public final class MarkdownRenderer {
                 TocExtension.create()
         ));
 
-        // Quebra simples de linha vira <br> (comportamento estilo GitHub-ish amigável).
+        // Single line break becomes <br> (GitHub-friendly behavior).
         options.set(HtmlRenderer.SOFT_BREAK, "<br />\n");
-        // Permite HTML embutido no markdown.
+        // Allows inline HTML in markdown.
         options.set(HtmlRenderer.GENERATE_HEADER_ID, true);
         options.set(HtmlRenderer.RENDER_HEADER_ID, true);
 
@@ -55,11 +55,11 @@ public final class MarkdownRenderer {
     }
 
     /**
-     * Renderiza o markdown informado, produzindo o fragmento HTML e a lista de
-     * títulos para o sumário.
+     * Renders the given markdown, producing the HTML fragment and the list of
+     * headings for the table of contents.
      *
-     * @param markdown conteúdo markdown; {@code null} é tratado como vazio
-     * @return resultado da renderização
+     * @param markdown markdown content; {@code null} is treated as empty
+     * @return the render result
      */
     public RenderResult render(String markdown) {
         Document document = parser.parse(markdown == null ? "" : markdown);

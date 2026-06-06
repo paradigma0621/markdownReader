@@ -3,12 +3,12 @@ package com.markdownreader.ui;
 import java.io.File;
 
 /**
- * Observa um arquivo em uma thread de segundo plano e dispara um callback
- * sempre que detecta mudança no horário de modificação.
+ * Watches a file on a background thread and fires a callback whenever
+ * a change in the modification timestamp is detected.
  *
- * <p>Usa polling simples (a cada 700&nbsp;ms) por ser robusto frente a editores
- * que substituem o arquivo (em vez de gravar no mesmo inode), comportamento que
- * confunde o {@code WatchService} em algumas plataformas.
+ * <p>Uses simple polling (every 700&nbsp;ms) because it is robust against editors
+ * that replace the file (instead of writing to the same inode), behavior that
+ * confuses {@code WatchService} on some platforms.
  */
 final class FileWatcher {
 
