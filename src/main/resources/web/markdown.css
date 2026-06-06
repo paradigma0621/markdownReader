@@ -56,9 +56,12 @@ body {
 }
 
 .markdown-body {
-    max-width: 880px;
+    /* Acompanha a largura da janela (em vez de uma coluna central estreita),
+       com um teto generoso para preservar a legibilidade em telas ultrawide.
+       O padding lateral é fluido: encolhe em janelas pequenas e cresce nas grandes. */
+    max-width: 1400px;
     margin: 0 auto;
-    padding: 48px 56px 120px;
+    padding: 48px clamp(24px, 6vw, 96px) 120px;
 }
 
 /* ----------------------------- Títulos ----------------------------- */
