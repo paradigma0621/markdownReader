@@ -6,6 +6,7 @@ import com.markdownreader.markdown.MarkdownRenderer;
 import com.markdownreader.markdown.RenderResult;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
+import javafx.concurrent.Worker;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.geometry.Insets;
@@ -37,6 +38,7 @@ import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import netscape.javascript.JSObject;
 
 import java.io.File;
 import java.io.IOException;
@@ -70,6 +72,7 @@ public final class MainView {
     private final StackPane welcomePane = new StackPane();
 
     private final TextArea editorArea = new TextArea();
+    private final HeadingFolder folder = new HeadingFolder();
     private final StackPane centerStack = new StackPane();
     private final SplitPane centerSplit = new SplitPane();
     private final PauseTransition previewDebounce = new PauseTransition(Duration.millis(200));
@@ -94,10 +97,13 @@ public final class MainView {
     private boolean dirty = false;
     /** Prevents marking the document as modified when populating the editor from code. */
     private boolean suppressEditorListener = false;
+    /** Scroll position to restore after the next preview reload ({@code < 0} = none). */
+    private double pendingScrollRestore = -1;
 
     public MainView(Stage stage) {
         this.stage = stage;
-        this.theme = Theme.valueOf(prefs.get("theme", Theme.LIGHT.name()));
+        // Always start in the light theme, regardless of the last session's choice.
+        this.theme = Theme.LIGHT;
         this.fontScale.set(prefs.getDouble("fontScale", 1.0));
 
         buildLayout();
@@ -150,6 +156,11 @@ public final class MainView {
         Button fullscreenBtn = iconButton("⤢", "Fullscreen – markdown only  (F12)", e -> toggleFullscreen());
         fullscreenBtn.setId("fullscreen-button");
 
+        Button collapseAllBtn = iconButton("⊟", "Collapse all heading sections", e -> collapseAll());
+        collapseAllBtn.setId("collapse-all-button");
+        Button expandAllBtn = iconButton("⊞", "Expand all heading sections", e -> expandAll());
+        expandAllBtn.setId("expand-all-button");
+
         Button zoomOutBtn = iconButton("−", "Zoom out  (Ctrl+-)", e -> changeScale(-SCALE_STEP));
         Button zoomInBtn = iconButton("+", "Zoom in  (Ctrl++)", e -> changeScale(SCALE_STEP));
         zoomLabel.getStyleClass().add("zoom-label");
@@ -168,6 +179,7 @@ public final class MainView {
         HBox bar = new HBox(8,
                 openBtn, reloadBtn, sidebarBtn,
                 separator(), newBtn, editBtn, saveBtn, focusModeBtn, fullscreenBtn,
+                separator(), collapseAllBtn, expandAllBtn,
                 separator(), zoomOutBtn, zoomLabel, zoomInBtn,
                 spacer, title, separator(), themeBtn);
         bar.getStyleClass().add("toolbar");
@@ -179,6 +191,14 @@ public final class MainView {
     private Node buildCenter() {
         webView.setContextMenuEnabled(false);
         webView.getEngine().setJavaScriptEnabled(true);
+        // Re-install the JS bridge on every page load so a right-click on a heading
+        // in the rendered preview can fold/unfold its section.
+        webView.getEngine().getLoadWorker().stateProperty().addListener((o, was, state) -> {
+            if (state == Worker.State.SUCCEEDED) {
+                installPreviewFoldBridge();
+                restorePendingScroll();
+            }
+        });
 
         centerStack.getChildren().setAll(webView, welcomePane);
         centerStack.getStyleClass().add("content-area");
@@ -187,9 +207,11 @@ public final class MainView {
         editorArea.setWrapText(true);
         editorArea.setPromptText("Type your Markdown here…");
         editorArea.textProperty().addListener((obs, old, txt) -> onEditorTextChanged(txt));
+        // Shift+Tab folds/unfolds the heading section under the caret (org-mode style).
+        editorArea.addEventFilter(KeyEvent.KEY_PRESSED, this::handleEditorFold);
 
         // Updates the preview with a small delay to avoid re-rendering on every keystroke.
-        previewDebounce.setOnFinished(e -> renderMarkdown(currentMarkdown));
+        previewDebounce.setOnFinished(e -> refreshPreview());
 
         // In read mode, the SplitPane contains only the preview (full width).
         // When editing, the editor is inserted on the left.
@@ -282,8 +304,8 @@ public final class MainView {
             this.dirty = false;
             prefs.put("lastDir", file.getParent() == null ? "" : file.getParent());
 
-            renderMarkdown(markdown);
             syncEditorText(markdown);
+            refreshPreview();
             welcomePane.setVisible(false);
             updateTitle();
             updateStatus(file, markdown);
@@ -302,11 +324,44 @@ public final class MainView {
         }
     }
 
-    private void renderMarkdown(String markdown) {
-        RenderResult result = renderer.render(markdown);
+    private void refreshPreview() {
+        refreshPreview(false);
+    }
+
+    /**
+     * Renders the preview from the current (possibly folded) editor view, so collapsed
+     * sections are hidden in the styled output as well.
+     *
+     * @param preserveScroll when {@code true}, the current scroll position is captured
+     *        and restored after the reload, so folding/unfolding doesn't jump back to
+     *        the top of the document.
+     */
+    private void refreshPreview(boolean preserveScroll) {
+        if (preserveScroll) {
+            try {
+                Object y = webView.getEngine().executeScript("window.scrollY");
+                pendingScrollRestore = (y instanceof Number n) ? n.doubleValue() : -1;
+            } catch (Exception e) {
+                pendingScrollRestore = -1;
+            }
+        }
+        RenderResult result = renderer.render(folder.displayText(editorArea.getText()));
         String page = pageBuilder.build(result.html(), theme, fontScale.get());
         webView.getEngine().loadContent(page, "text/html");
         tocList.getItems().setAll(result.headings());
+    }
+
+    /** Restores the scroll position captured before a fold-driven preview reload. */
+    private void restorePendingScroll() {
+        if (pendingScrollRestore >= 0) {
+            try {
+                webView.getEngine().executeScript(
+                        "window.scrollTo(0, " + (long) pendingScrollRestore + ");");
+            } catch (Exception ignored) {
+                // page not ready
+            }
+            pendingScrollRestore = -1;
+        }
     }
 
     private void loadEmbeddedSample() {
@@ -314,8 +369,8 @@ public final class MainView {
             if (in != null) {
                 String md = new String(in.readAllBytes(), StandardCharsets.UTF_8);
                 this.currentMarkdown = md;
-                renderMarkdown(md);
                 syncEditorText(md);
+                refreshPreview();
             }
         } catch (IOException ignored) {
             // sample is optional
@@ -334,7 +389,10 @@ public final class MainView {
         }
         editMode = on;
         if (on) {
+            // Entering edit mode starts from the fully expanded document; keep the
+            // preview in sync (it may have been showing folded sections).
             syncEditorText(currentMarkdown);
+            refreshPreview();
             if (!focusMode && !centerSplit.getItems().contains(editorArea)) {
                 centerSplit.getItems().add(0, editorArea);
                 centerSplit.setDividerPositions(0.45);
@@ -354,7 +412,9 @@ public final class MainView {
         if (suppressEditorListener) {
             return;
         }
-        currentMarkdown = txt;
+        // The editor view may have collapsed heading sections; the source of truth
+        // for rendering and saving is always the fully expanded text.
+        currentMarkdown = folder.expand(txt);
         dirty = true;
         previewDebounce.playFromStart();
         updateTitle();
@@ -363,13 +423,107 @@ public final class MainView {
     /** Sets the editor text without triggering the "modified" cycle. */
     private void syncEditorText(String txt) {
         suppressEditorListener = true;
+        folder.reset(); // fresh text starts fully expanded
         editorArea.setText(txt);
         suppressEditorListener = false;
     }
 
+    /**
+     * Folds or unfolds the heading section under the caret on Shift+Tab. Collapsing
+     * only changes the view, not the document content, so it never marks the document
+     * as modified.
+     */
+    private void handleEditorFold(KeyEvent e) {
+        if (e.getCode() != KeyCode.TAB || !e.isShiftDown()
+                || e.isControlDown() || e.isAltDown() || e.isMetaDown()) {
+            return;
+        }
+        if (applyFold(folder.toggle(editorArea.getText(), editorArea.getCaretPosition()))) {
+            e.consume();
+        }
+    }
+
+    /** Folds every heading section (toolbar button). */
+    private void collapseAll() {
+        applyFold(folder.collapseAll(editorArea.getText(), editorArea.getCaretPosition()));
+    }
+
+    /** Expands every heading section (toolbar button). */
+    private void expandAll() {
+        applyFold(folder.expandAll(editorArea.getText(), editorArea.getCaretPosition()));
+    }
+
+    /** Toggles the {@code nth} heading of the rendered preview (right-click bridge). */
+    private void toggleHeadingByIndex(int nth) {
+        applyFold(folder.toggleNth(editorArea.getText(), nth));
+    }
+
+    /**
+     * Applies a new folded view to the editor and refreshes the preview. Folding is a
+     * view change only, so the editor listener is suppressed and the document is not
+     * marked dirty. Returns whether anything was applied.
+     */
+    private boolean applyFold(HeadingFolder.Result r) {
+        if (r == null) {
+            return false;
+        }
+        suppressEditorListener = true;
+        editorArea.setText(r.text());
+        editorArea.positionCaret(r.caret());
+        suppressEditorListener = false;
+        refreshPreview(true); // keep the preview where it is; only the section changes
+        return true;
+    }
+
+    /**
+     * Exposes {@link #toggleHeadingByIndex(int)} to the preview's JavaScript so a
+     * right-click on a heading toggles its fold. Must be public for the WebView bridge.
+     */
+    public final class PreviewFoldBridge {
+        public void toggleHeading(int index) {
+            toggleHeadingByIndex(index);
+        }
+    }
+
+    private final PreviewFoldBridge previewFoldBridge = new PreviewFoldBridge();
+
+    /** Installs the JS bridge and the contextmenu handler into the freshly loaded page. */
+    private void installPreviewFoldBridge() {
+        try {
+            JSObject window = (JSObject) webView.getEngine().executeScript("window");
+            window.setMember("mdFold", previewFoldBridge);
+            webView.getEngine().executeScript(PREVIEW_FOLD_JS);
+        } catch (Exception ignored) {
+            // page not ready or scripting unavailable
+        }
+    }
+
+    /**
+     * Makes every heading in the preview clickable to fold/unfold its section. Headings
+     * are identified by their position (0-based) among all headings, which matches the
+     * order the folder uses on the same view text. A left click is used (reliable and
+     * discoverable via the pointer cursor); a right click works too as a fallback.
+     */
+    private static final String PREVIEW_FOLD_JS =
+            "(function() {"
+            + "  function toggle(idx, e) {"
+            + "    if (e) { e.preventDefault(); e.stopPropagation(); }"
+            + "    if (idx >= 0 && window.mdFold) { window.mdFold.toggleHeading(idx); }"
+            + "  }"
+            + "  var hs = document.querySelectorAll('h1,h2,h3,h4,h5,h6');"
+            + "  for (var i = 0; i < hs.length; i++) {"
+            + "    (function(h, idx) {"
+            + "      h.style.cursor = 'pointer';"
+            + "      h.title = 'Click to fold/unfold this section';"
+            + "      h.addEventListener('click', function(e) { toggle(idx, e); });"
+            + "      h.addEventListener('contextmenu', function(e) { toggle(idx, e); });"
+            + "    })(hs[i], i);"
+            + "  }"
+            + "})();";
+
     /** Saves the current text to the open file; prompts for a destination if none exists. */
     private void save() {
-        String content = editMode ? editorArea.getText() : currentMarkdown;
+        String content = editMode ? folder.expand(editorArea.getText()) : currentMarkdown;
         File target = currentFile;
         if (target == null) {
             target = chooseSaveFile();
@@ -422,7 +576,7 @@ public final class MainView {
         currentMarkdown = "";
         dirty = false;
         syncEditorText("");
-        renderMarkdown("");
+        refreshPreview();
         welcomePane.setVisible(false);
         setEditMode(true);
         statusLabel.setText("New document (unsaved)");
@@ -520,9 +674,9 @@ public final class MainView {
     }
 
     private void rerenderCurrent() {
-        // Re-renders in-memory content (preserves unsaved edits);
-        // unlike reloadCurrent(), which re-reads the file from disk.
-        renderMarkdown(currentMarkdown);
+        // Re-renders in-memory content (preserves unsaved edits and the current fold
+        // state); unlike reloadCurrent(), which re-reads the file from disk.
+        refreshPreview();
     }
 
     private void toggleSidebar() {

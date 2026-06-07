@@ -65,6 +65,20 @@ java -jar target/markdown-reader-1.0.0.jar
 | `Ctrl++` / `Ctrl+-` | Zoom in / out |
 | `Ctrl+0` | Reset zoom |
 | `Ctrl + scroll` | Zoom |
+| `Shift+Tab` | Fold/unfold the heading section under the caret (in the editor) |
+| Right-click a heading | Fold/unfold that section in the rendered preview |
+
+### 🪗 Folding
+
+Heading sections can be collapsed org-mode style. Folding is a view-only change:
+the saved file always keeps the full text.
+
+- **Editor:** put the caret on a heading line (`#`, `##`, …) and press `Shift+Tab`
+  to collapse its section (everything up to the next heading of the same or higher
+  level); press it again to expand. A `⋯` marks collapsed headings.
+- **Preview:** right-click a heading in the styled output to fold/unfold it.
+- **Collapse all / Expand all:** the `⊟` / `⊞` toolbar buttons fold or unfold every
+  section at once (nesting is preserved, so you can re-expand level by level).
 
 ## 🏗️ Structure
 
@@ -79,6 +93,7 @@ src/main/java/com/markdownreader/
 │   └── Heading.java               table of contents entry
 └── ui/
     ├── MainView.java              toolbar, sidebar, WebView, actions
+    ├── HeadingFolder.java         org-mode style heading folding for the editor
     ├── FileWatcher.java           automatic reload
     └── Theme.java                 light/dark theme
 
