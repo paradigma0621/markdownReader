@@ -67,11 +67,22 @@ public final class HtmlPageBuilder {
                     <script>%s</script>
                     <script>
                         document.addEventListener('DOMContentLoaded', function () {
-                            if (window.hljs) {
-                                document.querySelectorAll('pre code').forEach(function (block) {
-                                    try { hljs.highlightElement(block); } catch (e) {}
-                                });
-                            }
+                            // Only highlight fenced blocks that explicitly declare a
+                            // language (flexmark emits `<code class="language-xxx">`).
+                            // Blocks with no language are left untouched and marked as a
+                            // neutral "note" so they are never auto-detected/mis-colored.
+                            document.querySelectorAll('pre code').forEach(function (block) {
+                                var match = /\\blanguage-([\\w-]+)\\b/.exec(block.className || '');
+                                if (window.hljs && match) {
+                                    try {
+                                        hljs.highlightElement(block);
+                                    } catch (e) {
+                                        block.classList.add('plaintext-note');
+                                    }
+                                } else {
+                                    block.classList.add('plaintext-note');
+                                }
+                            });
                         });
                     </script>
                 </body>

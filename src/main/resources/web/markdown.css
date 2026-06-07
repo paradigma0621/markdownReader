@@ -180,6 +180,16 @@ body {
     white-space: pre;
 }
 
+/* Fenced blocks with no language: neutral monospaced "note", no token colors.
+   hljs is never run on these, so they keep the plain --code-fg in both themes. */
+.markdown-body pre code.plaintext-note,
+.markdown-body pre code.plaintext-note * {
+    color: var(--code-fg);
+    background: transparent;
+    font-style: normal;
+    font-weight: inherit;
+}
+
 .markdown-body kbd {
     background: var(--kbd-bg);
     border: 1px solid var(--border);
