@@ -105,7 +105,7 @@ class MarkdownRendererTest {
     @Test
     void renderCodeBlock() {
         RenderResult result = renderer.render("```java\nSystem.out.println(\"hello\");\n```");
-        assertTrue(result.html().contains("<code>") || result.html().contains("<pre>"));
+        assertTrue(result.html().contains("<code") || result.html().contains("<pre"));
         assertTrue(result.html().contains("println"));
     }
 
@@ -207,5 +207,66 @@ class MarkdownRendererTest {
         assertNotNull(renderer.render(null).html());
         assertNotNull(renderer.render("").html());
         assertNotNull(renderer.render("# Hello").html());
+    }
+
+    // ------------------------------------------------- data-source-line stamping
+    // The preview→editor sync relies on every block element carrying its 0-based
+    // source line in a data-source-line attribute (SourceLineAttributeProvider).
+
+    /** Returns the opening tag (e.g. {@code <h1 ...>}) of the first {@code tag} in the html. */
+    private static String openTag(String html, String tag) {
+        int start = html.indexOf("<" + tag);
+        if (start < 0) {
+            return "";
+        }
+        return html.substring(start, html.indexOf('>', start) + 1);
+    }
+
+    @Test
+    void stampsZeroBasedSourceLineOnEveryBlockOfAMultiBlockDocument() {
+        String md = "# Title\n\nParagraph text\n\n## Section\n\nMore text";
+        String html = renderer.render(md).html();
+        assertTrue(openTag(html, "h1").contains("data-source-line=\"0\""), html);
+        assertTrue(openTag(html, "p").contains("data-source-line=\"2\""), html);
+        assertTrue(openTag(html, "h2").contains("data-source-line=\"4\""), html);
+        // The second paragraph sits on line 6.
+        assertTrue(html.contains("<p data-source-line=\"6\">"), html);
+    }
+
+    @Test
+    void headingBlockCarriesItsOwnSourceLine() {
+        String html = renderer.render("intro\n\n# Heading").html();
+        // "intro" is line 0, the heading is line 2.
+        assertTrue(openTag(html, "p").contains("data-source-line=\"0\""), html);
+        assertTrue(openTag(html, "h1").contains("data-source-line=\"2\""), html);
+    }
+
+    @Test
+    void codeFenceBlockCarriesSourceLine() {
+        String html = renderer.render("para\n\n```\ncode\n```").html();
+        // The fenced code block (rendered as <pre>) starts on line 2.
+        assertTrue(openTag(html, "pre").contains("data-source-line=\"2\""), html);
+    }
+
+    @Test
+    void listBlockCarriesSourceLine() {
+        String html = renderer.render("# H\n\n- a\n- b").html();
+        // The bullet list block starts on line 2.
+        assertTrue(openTag(html, "ul").contains("data-source-line=\"2\""), html);
+    }
+
+    @Test
+    void firstAndOnlyBlockIsSourceLineZero() {
+        String html = renderer.render("Just one paragraph").html();
+        assertTrue(openTag(html, "p").contains("data-source-line=\"0\""), html);
+    }
+
+    @Test
+    void inlineContentDoesNotReceiveItsOwnSourceLineAttribute() {
+        // Only block elements are stamped; inline nodes (the link/emphasis here) must not be.
+        String html = renderer.render("text with **bold** and [a link](https://example.com)").html();
+        assertTrue(openTag(html, "p").contains("data-source-line=\"0\""), html);
+        assertFalse(openTag(html, "a").contains("data-source-line"), html);
+        assertFalse(openTag(html, "strong").contains("data-source-line"), html);
     }
 }

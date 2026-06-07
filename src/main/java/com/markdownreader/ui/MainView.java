@@ -19,6 +19,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
@@ -487,12 +488,33 @@ public final class MainView {
 
     private final PreviewFoldBridge previewFoldBridge = new PreviewFoldBridge();
 
-    /** Installs the JS bridge and the contextmenu handler into the freshly loaded page. */
+    /**
+     * Exposes the preview→editor synchronization to the page's JavaScript. A double-click
+     * on rendered content opens the editor at the matching source line; scrolling the
+     * preview keeps the editor's visible position aligned. Must be public for the bridge.
+     */
+    public final class PreviewEditBridge {
+        /** Double-click: switch to edit mode and move the caret to {@code line}. */
+        public void openAtLine(int line) {
+            openEditorAtLine(line);
+        }
+
+        /** Scroll: keep the open editor aligned with {@code line} (no caret/focus change). */
+        public void alignToLine(int line) {
+            alignEditorToLine(line);
+        }
+    }
+
+    private final PreviewEditBridge previewEditBridge = new PreviewEditBridge();
+
+    /** Installs the JS bridges (fold + editor sync) and their handlers into the loaded page. */
     private void installPreviewFoldBridge() {
         try {
             JSObject window = (JSObject) webView.getEngine().executeScript("window");
             window.setMember("mdFold", previewFoldBridge);
+            window.setMember("mdEdit", previewEditBridge);
             webView.getEngine().executeScript(PREVIEW_FOLD_JS);
+            webView.getEngine().executeScript(PREVIEW_SYNC_JS);
         } catch (Exception ignored) {
             // page not ready or scripting unavailable
         }
@@ -515,11 +537,133 @@ public final class MainView {
             + "    (function(h, idx) {"
             + "      h.style.cursor = 'pointer';"
             + "      h.title = 'Click to fold/unfold this section';"
-            + "      h.addEventListener('click', function(e) { toggle(idx, e); });"
+            // Ignore the second click of a double-click so a dbl-click folds at most once.
+            + "      h.addEventListener('click', function(e) { if (e.detail > 1) return; toggle(idx, e); });"
             + "      h.addEventListener('contextmenu', function(e) { toggle(idx, e); });"
             + "    })(hs[i], i);"
             + "  }"
             + "})();";
+
+    /**
+     * Wires preview→editor synchronization in the loaded page:
+     * <ul>
+     *   <li>a double-click on non-heading content opens the editor at the source line of
+     *       the nearest element carrying {@code data-source-line} (headings keep their
+     *       fold behavior, so a double-click there never both folds and opens the editor);</li>
+     *   <li>scrolling reports the top-most visible block's source line so the editor can
+     *       follow, throttled via {@code requestAnimationFrame}.</li>
+     * </ul>
+     */
+    private static final String PREVIEW_SYNC_JS =
+            "(function() {"
+            + "  function hit(el) {"
+            + "    while (el && el.nodeType === 1) {"
+            + "      if (el.hasAttribute('data-source-line')) {"
+            + "        var n = parseInt(el.getAttribute('data-source-line'), 10);"
+            + "        if (!isNaN(n)) { return { line: n, el: el }; }"
+            + "      }"
+            + "      el = el.parentNode;"
+            + "    }"
+            + "    return null;"
+            + "  }"
+            + "  function isHeading(el) {"
+            + "    return /^h[1-6]$/i.test(el.tagName || '');"
+            + "  }"
+            + "  document.addEventListener('dblclick', function(e) {"
+            + "    var h = hit(e.target);"
+            + "    if (h && !isHeading(h.el) && window.mdEdit) { window.mdEdit.openAtLine(h.line); }"
+            + "  });"
+            + "  var ticking = false;"
+            + "  function report() {"
+            + "    ticking = false;"
+            + "    if (!window.mdEdit) { return; }"
+            + "    var els = document.querySelectorAll('[data-source-line]');"
+            + "    for (var i = 0; i < els.length; i++) {"
+            + "      var r = els[i].getBoundingClientRect();"
+            + "      if (r.bottom > 0) {"
+            + "        var n = parseInt(els[i].getAttribute('data-source-line'), 10);"
+            + "        if (!isNaN(n)) { window.mdEdit.alignToLine(n); }"
+            + "        return;"
+            + "      }"
+            + "    }"
+            + "  }"
+            + "  window.addEventListener('scroll', function() {"
+            + "    if (!ticking) { ticking = true; requestAnimationFrame(report); }"
+            + "  });"
+            + "})();";
+
+    /**
+     * Opens the editor at the source line that produced the double-clicked preview element.
+     * Leaves fullscreen/focus modes if needed so the editor is visible. When coming from a
+     * folded read-mode view, the clicked line is first translated to the expanded document,
+     * since entering edit mode unfolds everything.
+     */
+    private void openEditorAtLine(int previewLine) {
+        if (previewLine < 0) {
+            return;
+        }
+        if (fullscreenMode) {
+            stage.setFullScreen(false);
+        }
+        if (focusMode) {
+            setFocusMode(false);
+        }
+        int targetLine;
+        if (editMode) {
+            // The editor already shows the same view the preview was rendered from.
+            targetLine = previewLine;
+        } else {
+            targetLine = folder.expandedLineOf(editorArea.getText(), previewLine);
+            setEditMode(true); // expands all folds and re-renders the preview
+        }
+        moveEditorToLine(targetLine);
+    }
+
+    /**
+     * Keeps the open editor's scroll position aligned with the preview without moving the
+     * caret or stealing focus (so it never marks the document as modified). No-op when the
+     * editor is not visible.
+     */
+    private void alignEditorToLine(int previewLine) {
+        if (!editMode || focusMode || fullscreenMode || previewLine < 0) {
+            return;
+        }
+        scrollEditorToLine(previewLine);
+    }
+
+    /** Moves the caret to the start of {@code line} and scrolls it into view. */
+    private void moveEditorToLine(int line) {
+        String text = editorArea.getText();
+        editorArea.positionCaret(offsetOfLine(text, line));
+        editorArea.requestFocus();
+        // Defer the scroll until the skin has laid out the (possibly just re-rendered) text.
+        Platform.runLater(() -> scrollEditorToLine(line));
+    }
+
+    /** Scrolls the editor so {@code line} is roughly at the top, via its vertical scrollbar. */
+    private void scrollEditorToLine(int line) {
+        long total = editorArea.getText().lines().count();
+        if (total <= 1) {
+            return;
+        }
+        if (editorArea.lookup(".scroll-bar:vertical") instanceof ScrollBar bar && bar.isVisible()) {
+            double fraction = clamp((double) line / (total - 1), 0.0, 1.0);
+            bar.setValue(bar.getMin() + fraction * (bar.getMax() - bar.getMin()));
+        }
+    }
+
+    /** Character offset of the start of the 0-based {@code line} within {@code text}. */
+    private static int offsetOfLine(String text, int line) {
+        int offset = 0;
+        int current = 0;
+        for (int i = 0; i < text.length() && current < line; i++) {
+            if (text.charAt(i) == '\n') {
+                current++;
+                offset = i + 1;
+            }
+        }
+        return Math.min(offset, text.length());
+    }
 
     /** Saves the current text to the open file; prompts for a destination if none exists. */
     private void save() {
