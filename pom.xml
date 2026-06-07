@@ -45,6 +45,27 @@
             <version>5.10.2</version>
             <scope>test</scope>
         </dependency>
+
+        <!-- TestFX: drives the JavaFX UI on the FX thread -->
+        <dependency>
+            <groupId>org.testfx</groupId>
+            <artifactId>testfx-core</artifactId>
+            <version>4.0.18</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testfx</groupId>
+            <artifactId>testfx-junit5</artifactId>
+            <version>4.0.18</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Monocle: headless JavaFX backend so UI tests run without a display -->
+        <dependency>
+            <groupId>org.testfx</groupId>
+            <artifactId>openjfx-monocle</artifactId>
+            <version>21.0.2</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -58,11 +79,15 @@
                 </configuration>
             </plugin>
 
-            <!-- JUnit 5 support -->
+            <!-- JUnit 5 support; headless JavaFX via Monocle for UI tests.
+                 @{argLine} preserves the jacoco agent argument. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <argLine>@{argLine} -Djava.awt.headless=true -Dtestfx.robot=glass -Dtestfx.headless=true -Dprism.order=sw -Dprism.text=t2k -Dglass.platform=Monocle -Dmonocle.platform=Headless</argLine>
+                </configuration>
             </plugin>
 
             <!-- Code coverage -->
@@ -108,6 +133,8 @@
                             <goal>shade</goal>
                         </goals>
                         <configuration>
+                            <!-- Don't generate dependency-reduced-pom.xml -->
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
                                 <transformer
                                     implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">

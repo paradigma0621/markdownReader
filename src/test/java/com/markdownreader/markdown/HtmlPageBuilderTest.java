@@ -42,13 +42,17 @@ class HtmlPageBuilderTest {
     @Test
     void buildLightThemeDoesNotContainDarkClass() {
         String html = builder.build("<p>Hello</p>", Theme.LIGHT, 1.0);
-        assertFalse(html.contains("theme-dark"));
+        // The bundled CSS defines both .theme-light and .theme-dark rules; only the
+        // <html> element's class attribute reflects the active theme.
+        assertTrue(html.contains("class=\"theme-light\""));
+        assertFalse(html.contains("class=\"theme-dark\""));
     }
 
     @Test
     void buildDarkThemeDoesNotContainLightClass() {
         String html = builder.build("<p>Hello</p>", Theme.DARK, 1.0);
-        assertFalse(html.contains("theme-light"));
+        assertTrue(html.contains("class=\"theme-dark\""));
+        assertFalse(html.contains("class=\"theme-light\""));
     }
 
     @Test

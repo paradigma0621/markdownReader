@@ -186,12 +186,13 @@ class EmojiImageRendererTest {
 
     @Test
     void keycapEmojiConsumedAsSingleCluster() {
-        // '#' + VS16 + KEYCAP -> consumeCluster while loop: VS16 consumed, KEYCAP consumed
-        // filename "23-20e3" -> no SVG -> graceful degradation
+        // '#' + VS16 + KEYCAP -> consumeCluster while loop: VS16 consumed, KEYCAP consumed.
+        // filename "23-20e3" IS bundled, so the whole cluster renders as a single emoji image.
         String input = "#" + VS16 + KEYCAP;
         String output = renderer.render(input);
-        assertFalse(output.contains("<img class=\"emoji\""), "No bundled SVG for #-keycap");
-        assertTrue(output.contains("#"));
+        assertTrue(output.contains("<img class=\"emoji\""), "Bundled SVG 23-20e3 should render for #-keycap");
+        // The full cluster is consumed as one: it becomes a single image whose alt is the cluster.
+        assertTrue(output.contains("alt=\"#"), "The keycap cluster should be the image alt text");
     }
 
     // ---------------------------------------------------------------- isEmojiModifier branch in consumeCluster
