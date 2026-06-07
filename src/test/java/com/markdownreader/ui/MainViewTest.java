@@ -6,6 +6,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.control.TextArea;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationTest;
 import org.testfx.util.WaitForAsyncUtils;
 
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -128,6 +130,38 @@ class MainViewTest extends ApplicationTest {
         Path file = tempDir.resolve(name);
         Files.writeString(file, content, StandardCharsets.UTF_8);
         return file;
+    }
+
+    /** Reaches the private preview→editor JS bridge (its public surface is JS-only). */
+    private MainView.PreviewEditBridge bridge() {
+        try {
+            Field f = MainView.class.getDeclaredField("previewEditBridge");
+            f.setAccessible(true);
+            return (MainView.PreviewEditBridge) f.get(mainView);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Character offset of the start of the 0-based {@code line} (mirrors MainView.offsetOfLine). */
+    private static int lineStart(String text, int line) {
+        int offset = 0;
+        int current = 0;
+        for (int i = 0; i < text.length() && current < line; i++) {
+            if (text.charAt(i) == '\n') {
+                current++;
+                offset = i + 1;
+            }
+        }
+        return Math.min(offset, text.length());
+    }
+
+    private boolean isDirty() {
+        return fx(() -> stage.getTitle()).startsWith("●");
+    }
+
+    private boolean editorPresent() {
+        return !lookup(".editor-area").queryAll().isEmpty();
     }
 
     // --------------------------------------------------------- layout chrome
@@ -364,6 +398,166 @@ class MainViewTest extends ApplicationTest {
         interact(() -> mainView.requestFocus());
         WaitForAsyncUtils.waitForFxEvents();
         assertNotNull(fx(() -> scene.getRoot()));
+    }
+
+    // ------------------------------------------------ preview → editor sync
+
+    @Test
+    void dblClickBridgeOpensEditorAtLineFromReadMode() throws Exception {
+        Path file = writeMarkdown("sync.md", "# A\nline1\nline2\nline3\n");
+        interact(() -> mainView.openFile(file.toFile()));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertFalse(editorPresent(), "starts in read mode");
+        interact(() -> bridge().openAtLine(2));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertTrue(editorPresent(), "double-click should open the editor");
+        // Opening at a line via caret move/scroll must never mark the document dirty.
+        assertFalse(isDirty(), "opening at a line must not mark the document modified");
+    }
+
+    @Test
+    void openAtLineMovesCaretWhenAlreadyEditing() {
+        fireKey(KeyCode.N, true); // new document -> already in edit mode
+        TextArea ta = editor();
+        interact(() -> ta.setText("l0\nl1\nl2\nl3\nl4"));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        interact(() -> bridge().openAtLine(3));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertEquals(lineStart("l0\nl1\nl2\nl3\nl4", 3), fx(ta::getCaretPosition));
+    }
+
+    @Test
+    void openAtLineBeyondTheEndClampsCaretToTheLastLineStart() {
+        fireKey(KeyCode.N, true);
+        TextArea ta = editor();
+        interact(() -> ta.setText("l0\nl1\nl2"));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        interact(() -> bridge().openAtLine(99));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertEquals(lineStart("l0\nl1\nl2", 99), fx(ta::getCaretPosition));
+    }
+
+    @Test
+    void openAtLineIgnoresNegativeLines() {
+        interact(() -> bridge().openAtLine(-1));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertFalse(editorPresent(), "a negative line is a no-op (no editor opened)");
+    }
+
+    @Test
+    void openAtLineLeavesFullscreenBeforeShowingTheEditor() {
+        fireKey(KeyCode.F12); // total fullscreen, read mode
+        assertTrue(fx(() -> stage.isFullScreen()));
+
+        interact(() -> bridge().openAtLine(0));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertFalse(fx(() -> stage.isFullScreen()), "openAtLine should leave fullscreen");
+        assertTrue(editorPresent(), "editor visible after leaving fullscreen");
+    }
+
+    @Test
+    void openAtLineLeavesFocusModeBeforeShowingTheEditor() {
+        fireKey(KeyCode.F11); // focus mode, read mode
+        assertNull(fx(() -> root.getLeft()), "sidebar hidden in focus mode");
+
+        interact(() -> bridge().openAtLine(1));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertTrue(editorPresent(), "editor visible after leaving focus mode");
+        assertNotNull(fx(() -> root.getLeft()), "sidebar restored after leaving focus mode");
+    }
+
+    @Test
+    void alignToLineIsANoOpOutsideEditMode() {
+        interact(() -> bridge().alignToLine(3));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertFalse(editorPresent(), "alignment without an editor does nothing");
+    }
+
+    @Test
+    void alignToLineKeepsTheDocumentClean() throws Exception {
+        Path file = writeMarkdown("align.md", "# T\n\nbody one\n\nbody two\n");
+        interact(() -> mainView.openFile(file.toFile()));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        fireKey(KeyCode.E, true); // enter edit mode (clean)
+        assertFalse(isDirty(), "edit mode starts clean");
+
+        interact(() -> bridge().alignToLine(2));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertFalse(isDirty(), "scroll alignment must not mark the document modified");
+    }
+
+    @Test
+    void alignToLineNoOpForSingleLineDocument() {
+        fireKey(KeyCode.N, true);
+        TextArea ta = editor();
+        interact(() -> ta.setText("only one line"));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        interact(() -> bridge().alignToLine(0)); // total <= 1 -> no scrolling
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals("only one line", fx(ta::getText));
+    }
+
+    @Test
+    void alignToLineScrollsTheEditorViaItsVerticalScrollBar() {
+        fireKey(KeyCode.N, true);
+        TextArea ta = editor();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 400; i++) {
+            sb.append("line ").append(i).append('\n');
+        }
+        interact(() -> {
+            ta.setText(sb.toString());
+            ta.setMinHeight(120);
+            ta.setPrefHeight(120);
+            ta.setMaxHeight(120);
+            root.applyCss();
+            root.layout();
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        interact(() -> bridge().alignToLine(200));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        ScrollBar bar = fx(() -> (ScrollBar) ta.lookup(".scroll-bar:vertical"));
+        assertNotNull(bar, "a vertical scrollbar should exist for a long document");
+        assertTrue(fx(bar::isVisible), "the vertical scrollbar should be visible");
+        assertTrue(fx(bar::getValue) > bar.getMin(), "alignToLine should move the scrollbar down");
+    }
+
+    @Test
+    void alignToLineIsIgnoredWhileInFocusMode() {
+        fireKey(KeyCode.N, true); // edit mode (editMode stays true)
+        fireKey(KeyCode.F11);     // focus mode
+        interact(() -> bridge().alignToLine(2));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertNull(fx(() -> root.getLeft()), "still in focus mode, alignment ignored");
+    }
+
+    @Test
+    void alignToLineIsIgnoredWhileInFullscreen() {
+        fireKey(KeyCode.N, true); // edit mode (editMode stays true)
+        fireKey(KeyCode.F12);     // fullscreen
+        interact(() -> bridge().alignToLine(2));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertTrue(fx(() -> stage.isFullScreen()), "still fullscreen, alignment ignored");
+    }
+
+    @Test
+    void alignToLineIgnoresNegativeLines() {
+        fireKey(KeyCode.N, true); // edit mode, not focus/fullscreen
+        interact(() -> bridge().alignToLine(-5));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertTrue(editorPresent(), "a negative line is a no-op but leaves the editor open");
     }
 
     private static void assertNotEquals(boolean unexpected, boolean actual, String message) {

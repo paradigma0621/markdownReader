@@ -154,6 +154,36 @@ public final class HeadingFolder {
     }
 
     /**
+     * Maps a line index in the current (possibly folded) view to its line index in the
+     * fully expanded document. Visible view lines keep their content but shift down by
+     * the number of hidden body lines re-inserted before them when the document is
+     * expanded. Used by the preview→editor sync when leaving a folded read-mode view.
+     *
+     * @param viewText the folded view text the preview was rendered from
+     * @param viewLine 0-based line index of a (visible) line in that view
+     * @return the 0-based line index of the same line in the expanded document
+     */
+    public int expandedLineOf(String viewText, int viewLine) {
+        if (viewText == null || viewLine <= 0) {
+            return Math.max(0, viewLine);
+        }
+        String[] lines = splitLines(viewText);
+        boolean[] mask = headingMask(lines);
+        int expanded = 0;
+        int k = 0;
+        for (int i = 0; i < lines.length && i < viewLine; i++) {
+            expanded++; // the visible line itself
+            if (mask[i] && isFolded(lines[i]) && k < hiddenBodies.size()) {
+                String body = hiddenBodies.get(k++);
+                if (body != null && !body.isEmpty()) {
+                    expanded += splitLines(body).length;
+                }
+            }
+        }
+        return expanded;
+    }
+
+    /**
      * The text to feed the Markdown renderer for the preview. The marker is an ordinary
      * visible glyph, so the folded view renders as-is (collapsed headings show "...").
      */

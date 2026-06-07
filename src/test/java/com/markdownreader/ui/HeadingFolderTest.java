@@ -3,6 +3,9 @@ package com.markdownreader.ui;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class HeadingFolderTest {
@@ -190,6 +193,84 @@ class HeadingFolderTest {
         assertFalse(r.text().contains("b-body"));
         assertTrue(r.text().contains("a-body")); // A untouched
         assertEquals(text, folder.expand(r.text()));
+    }
+
+    // -------------------------------------------------------- expandedLineOf(...)
+    // Maps a (visible) line of the folded preview view back to its line in the fully
+    // expanded document, used when a double-click leaves a folded read-mode view.
+
+    /** Overwrites the k-th stored hidden body (reflection: exercises defensive null/empty). */
+    @SuppressWarnings("unchecked")
+    private static void setHiddenBody(HeadingFolder f, int k, String value) {
+        try {
+            Field field = HeadingFolder.class.getDeclaredField("hiddenBodies");
+            field.setAccessible(true);
+            ((List<String>) field.get(f)).set(k, value);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void expandedLineOfNullViewTextReturnsTheClampedRequestedLine() {
+        // Null view: nothing to expand, so the requested line is returned (clamped at 0).
+        assertEquals(5, folder.expandedLineOf(null, 5));
+        assertEquals(0, folder.expandedLineOf(null, -3));
+    }
+
+    @Test
+    void expandedLineOfFirstAndNegativeLineIsZero() {
+        assertEquals(0, folder.expandedLineOf("# A\nbody", 0));
+        assertEquals(0, folder.expandedLineOf("# A\nbody", -2));
+    }
+
+    @Test
+    void expandedLineOfUnfoldedViewIsTheIdentityMapping() {
+        // No folds: every visible line keeps its index in the expanded document.
+        String view = "# A\nbody1\nbody2";
+        assertEquals(2, folder.expandedLineOf(view, 2));
+    }
+
+    @Test
+    void expandedLineOfShiftsVisibleLinesPastReinsertedHiddenBodies() {
+        HeadingFolder.Result r = folder.toggle("# A\nbody1\nbody2\n# B\ntail", 0);
+        String view = r.text(); // "# A ⋯\n# B\ntail"
+        // View line 1 ("# B") follows the two hidden body lines -> expanded line 3.
+        assertEquals(3, folder.expandedLineOf(view, 1));
+        // View line 2 ("tail") -> expanded line 4.
+        assertEquals(4, folder.expandedLineOf(view, 2));
+    }
+
+    @Test
+    void expandedLineOfBeyondTheLastLineWalksTheWholeView() {
+        HeadingFolder.Result r = folder.toggle("# A\nbody1\nbody2\n# B\ntail", 0);
+        // A view line past the end maps to the end of the expanded document (5 lines total).
+        assertEquals(5, folder.expandedLineOf(r.text(), 99));
+    }
+
+    @Test
+    void expandedLineOfIgnoresFoldedMarkersWithoutAStoredBody() {
+        // A folded heading marker but no corresponding hidden body (fresh folder state):
+        // the marker contributes only its own line, never a body offset.
+        assertEquals(2, folder.expandedLineOf("# A " + HeadingFolder.ELLIPSIS + "\nx", 2));
+    }
+
+    @Test
+    void expandedLineOfTreatsAnEmptyHiddenBodyAsNoExtraLines() {
+        // Folding a section whose body is a single blank line stores an empty body string.
+        HeadingFolder f = new HeadingFolder();
+        HeadingFolder.Result r = f.toggle("# A\n\n# B", 0);
+        assertTrue(f.bodies().get(0).isEmpty(), "the stored body is empty");
+        // The empty body adds no offset, so "# B" maps straight through.
+        assertEquals(1, f.expandedLineOf(r.text(), 1));
+    }
+
+    @Test
+    void expandedLineOfTreatsANullHiddenBodyAsNoExtraLines() {
+        HeadingFolder f = new HeadingFolder();
+        HeadingFolder.Result r = f.toggle("# A\nbody\n# B", 0);
+        setHiddenBody(f, 0, null); // defensive null body must be skipped, not throw
+        assertEquals(2, f.expandedLineOf(r.text(), 2));
     }
 
     @Test

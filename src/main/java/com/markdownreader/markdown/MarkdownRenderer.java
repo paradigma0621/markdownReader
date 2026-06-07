@@ -9,11 +9,17 @@ import com.vladsch.flexmark.ext.gfm.tasklist.TaskListExtension;
 import com.vladsch.flexmark.ext.tables.TablesExtension;
 import com.vladsch.flexmark.ext.toc.TocExtension;
 import com.vladsch.flexmark.ext.typographic.TypographicExtension;
+import com.vladsch.flexmark.html.AttributeProvider;
 import com.vladsch.flexmark.html.HtmlRenderer;
+import com.vladsch.flexmark.html.IndependentAttributeProviderFactory;
+import com.vladsch.flexmark.html.renderer.AttributablePart;
+import com.vladsch.flexmark.html.renderer.LinkResolverContext;
 import com.vladsch.flexmark.parser.Parser;
+import com.vladsch.flexmark.util.ast.Block;
 import com.vladsch.flexmark.util.ast.Document;
 import com.vladsch.flexmark.util.ast.Node;
 import com.vladsch.flexmark.util.data.MutableDataSet;
+import com.vladsch.flexmark.util.html.MutableAttributes;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -51,7 +57,11 @@ public final class MarkdownRenderer {
         options.set(HtmlRenderer.RENDER_HEADER_ID, true);
 
         this.parser = Parser.builder(options).build();
-        this.renderer = HtmlRenderer.builder(options).build();
+        // Stamp every rendered block element with its source line so the preview can
+        // map a clicked/visible element back to the matching line in the editor.
+        this.renderer = HtmlRenderer.builder(options)
+                .attributeProviderFactory(new SourceLineAttributeProviderFactory())
+                .build();
     }
 
     /**
@@ -71,6 +81,28 @@ public final class MarkdownRenderer {
         List<Heading> headings = new ArrayList<>();
         collectHeadings(node, headings);
         return headings;
+    }
+
+    /**
+     * Adds a {@code data-source-line} attribute (0-based start line of the node in the
+     * Markdown source) to every block-level element, so the WebView's JavaScript can
+     * synchronize the preview with the plain-text editor.
+     */
+    private static final class SourceLineAttributeProvider implements AttributeProvider {
+        @Override
+        public void setAttributes(Node node, AttributablePart part, MutableAttributes attributes) {
+            if (part == AttributablePart.NODE && node instanceof Block) {
+                attributes.replaceValue("data-source-line", String.valueOf(node.getStartLineNumber()));
+            }
+        }
+    }
+
+    /** Factory wiring the {@link SourceLineAttributeProvider} into the {@link HtmlRenderer}. */
+    private static final class SourceLineAttributeProviderFactory extends IndependentAttributeProviderFactory {
+        @Override
+        public AttributeProvider apply(LinkResolverContext context) {
+            return new SourceLineAttributeProvider();
+        }
     }
 
     private void collectHeadings(Node node, List<Heading> out) {
