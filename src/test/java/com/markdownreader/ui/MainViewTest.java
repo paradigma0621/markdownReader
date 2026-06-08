@@ -330,6 +330,39 @@ class MainViewTest extends ApplicationTest {
         assertNotNull(fx(() -> root.getCenter()));
     }
 
+    // ------------------------------------------------------------ undo (Ctrl+Z)
+
+    @Test
+    void ctrlZInReadModeIsNoOp() {
+        // editMode is false (initial state): the case-Z early-return path is taken.
+        // Ctrl+Z must not throw and must not open the editor.
+        assertFalse(editorPresent(), "editor must not be present in read mode");
+        fireKey(KeyCode.Z, true);
+        assertFalse(editorPresent(), "Ctrl+Z in read mode must leave the editor absent");
+    }
+
+    @Test
+    void ctrlZInEditModeUndoesLastChange() {
+        // Enter edit mode; syncEditorText() calls setText() which resets the undo stack.
+        fireKey(KeyCode.E, true); // Ctrl+E
+        assertTrue(editorPresent(), "editor must be present after entering edit mode");
+
+        TextArea ta = editor();
+        // appendText() is an undoable operation (unlike setText, which clears the undo history).
+        interact(() -> ta.appendText("UNDO_MARKER"));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertTrue(fx(ta::getText).contains("UNDO_MARKER"),
+                "editor text must contain the marker before undo");
+
+        // Ctrl+Z: case-Z with editMode=true -> editorArea.undo() is called and the event is consumed.
+        fireKey(KeyCode.Z, true);
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertFalse(fx(ta::getText).contains("UNDO_MARKER"),
+                "Ctrl+Z in edit mode must undo the last appended text");
+    }
+
     // ------------------------------------------------------------ theme/zoom
 
     @Test

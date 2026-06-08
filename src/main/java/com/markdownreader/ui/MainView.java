@@ -1275,6 +1275,14 @@ public final class MainView {
             case B -> toggleSidebar();
             case E -> toggleEditMode();
             case S -> save();
+            case Z -> {
+                // Undo the last edit in the editor. Only meaningful while the editor is
+                // open; otherwise let the event propagate so the platform can handle it.
+                if (!editMode) {
+                    return;
+                }
+                editorArea.undo();
+            }
             default -> {
                 return; // not a known shortcut: don't consume the event
             }
