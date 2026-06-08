@@ -88,6 +88,8 @@ public final class MainView {
     private final StackPane centerStack = new StackPane();
     private final SplitPane centerSplit = new SplitPane();
     private final PauseTransition previewDebounce = new PauseTransition(Duration.millis(200));
+    /** Debounces editor→preview scroll sync so rapid scrolling does not flood the WebEngine. */
+    private final PauseTransition scrollSyncDebounce = new PauseTransition(Duration.millis(50));
 
     private final DoubleProperty fontScale = new SimpleDoubleProperty(1.0);
     private Theme theme;
@@ -114,6 +116,13 @@ public final class MainView {
     private boolean dirty = false;
     /** Prevents marking the document as modified when populating the editor from code. */
     private boolean suppressEditorListener = false;
+    /**
+     * Prevents editor→preview scroll sync from firing while the editor's scrollbar is
+     * moved programmatically (e.g. by {@link #scrollEditorToLine}), avoiding a feedback loop.
+     */
+    private boolean suppressScrollSync = false;
+    /** Ensures the editor's vertical ScrollBar listener is registered at most once. */
+    private boolean editorScrollListenerAttached = false;
     /** Scroll position to restore after the next preview reload ({@code < 0} = none). */
     private double pendingScrollRestore = -1;
     /**
@@ -254,6 +263,17 @@ public final class MainView {
 
         // Updates the preview with a small delay to avoid re-rendering on every keystroke.
         previewDebounce.setOnFinished(e -> refreshPreview());
+
+        // Pushes the editor's scroll fraction to the preview, throttled.
+        scrollSyncDebounce.setOnFinished(e -> pushEditorScrollToPreview());
+
+        // Once the TextArea skin is live the vertical ScrollBar exists in the scene graph.
+        // Register the scroll-sync value listener at that point (at most once).
+        editorArea.skinProperty().addListener((obs, oldSkin, newSkin) -> {
+            if (newSkin != null) {
+                Platform.runLater(this::attachEditorScrollListener);
+            }
+        });
 
         // In read mode, the SplitPane contains only the preview (full width).
         // When editing, the editor is inserted on the left.
@@ -508,6 +528,9 @@ public final class MainView {
             if (!focusMode) {
                 editorArea.requestFocus();
             }
+            // Ensure the scroll-sync listener is attached now that the editor is in the
+            // scene (skin may already be live; runLater waits for layout to complete).
+            Platform.runLater(this::attachEditorScrollListener);
         } else {
             centerSplit.getItems().remove(editorArea);
         }
@@ -754,7 +777,62 @@ public final class MainView {
         }
         if (editorArea.lookup(".scroll-bar:vertical") instanceof ScrollBar bar && bar.isVisible()) {
             double fraction = clamp((double) line / (total - 1), 0.0, 1.0);
+            // Suppress the scroll-sync listener so this programmatic move does not feed
+            // back into the preview (the listener fires synchronously inside setValue).
+            suppressScrollSync = true;
             bar.setValue(bar.getMin() + fraction * (bar.getMax() - bar.getMin()));
+            Platform.runLater(() -> suppressScrollSync = false);
+        }
+    }
+
+    /**
+     * Registers a value listener on the editor's vertical ScrollBar that drives
+     * editor→preview scroll synchronization. Called after the TextArea skin is applied;
+     * the {@link #editorScrollListenerAttached} flag ensures it runs at most once.
+     *
+     * <p>The vertical ScrollBar is used (rather than {@code scrollTopProperty}) because
+     * it exposes a normalized 0..1 range via {@code getValue()/getMin()/getMax()} without
+     * requiring access to the TextArea skin's internal layout measurements. The same
+     * pattern is already used by {@link #scrollEditorToLine}.
+     */
+    private void attachEditorScrollListener() {
+        if (editorScrollListenerAttached) {
+            return;
+        }
+        Node node = editorArea.lookup(".scroll-bar:vertical");
+        if (node instanceof ScrollBar bar) {
+            bar.valueProperty().addListener((obs, wasVal, newVal) -> {
+                if (editMode && !suppressScrollSync && !focusMode && !fullscreenMode) {
+                    scrollSyncDebounce.playFromStart();
+                }
+            });
+            editorScrollListenerAttached = true;
+        }
+    }
+
+    /**
+     * Reads the editor's current vertical scroll fraction (0..1) from its ScrollBar and
+     * scrolls the preview to the same proportional position in the rendered document.
+     * Uses the same ratio→pixel JS pattern as zoom-aware scroll restoration.
+     *
+     * <p>Mapping accuracy: fraction-of-total-height is a best approximation. A line-level
+     * source-to-rendered mapping would need per-element offsets that are not reliably
+     * available; the proportional approach keeps the gist of the edited passage in view.
+     */
+    private void pushEditorScrollToPreview() {
+        Node node = editorArea.lookup(".scroll-bar:vertical");
+        if (!(node instanceof ScrollBar bar)) {
+            return;
+        }
+        double range = bar.getMax() - bar.getMin();
+        double fraction = range <= 0 ? 0.0 : clamp((bar.getValue() - bar.getMin()) / range, 0.0, 1.0);
+        try {
+            double scrollHeight = scriptNumber("document.documentElement.scrollHeight");
+            double clientHeight = scriptNumber("window.innerHeight");
+            double target = scrollTargetForRatio(fraction, scrollHeight, clientHeight);
+            webView.getEngine().executeScript("window.scrollTo(0, " + (long) target + ");");
+        } catch (Exception ignored) {
+            // WebView not ready or document not yet laid out
         }
     }
 
