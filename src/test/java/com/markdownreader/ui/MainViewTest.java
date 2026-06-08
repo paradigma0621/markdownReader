@@ -17,6 +17,9 @@ import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationTest;
 import org.testfx.util.WaitForAsyncUtils;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -398,6 +401,177 @@ class MainViewTest extends ApplicationTest {
     @Test
     void scrollTargetForRatioGuardsZeroHeight() {
         assertClose(0.0, MainView.scrollTargetForRatio(0.5, 100, 200));
+    }
+
+    @Test
+    void scrollRatioAndTargetGuardNaNHeight() {
+        // A NaN scrollHeight (page not laid out yet) must not propagate; both helpers
+        // fall back to 0 instead of returning NaN.
+        assertClose(0.0, MainView.scrollRatio(400, Double.NaN, 200));
+        assertClose(0.0, MainView.scrollTargetForRatio(0.5, Double.NaN, 200));
+    }
+
+    // ---- zoom-preserving scroll plumbing (private methods via reflection) ----
+    //
+    // The pure math above is the heart of the feature; these exercise the live
+    // glue around it -- capturing the current scroll for each ScrollMode and
+    // re-applying it after the reload -- by invoking the private methods on the
+    // real MainView. The success paths run on the FX thread (executeScript works
+    // against the loaded preview); the failure paths run off the FX thread, where
+    // WebEngine.executeScript throws, to cover the "page not ready" catch blocks.
+
+    @Test
+    void captureAbsoluteThenRestoreScrollOnFxThread() {
+        interact(() -> {
+            invokePrivate("captureScroll", new Class<?>[]{scrollModeClass()}, scrollMode("ABSOLUTE"));
+            invokePrivate("restorePendingScroll", new Class<?>[]{});
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        // After restoring, the absolute marker is disarmed for the next reload.
+        assertTrue(getDoubleField("pendingScrollRestore") < 0, "absolute marker cleared");
+    }
+
+    @Test
+    void captureRatioThenRestoreScrollOnFxThread() {
+        interact(() -> {
+            invokePrivate("captureScroll", new Class<?>[]{scrollModeClass()}, scrollMode("RATIO"));
+            invokePrivate("restorePendingScroll", new Class<?>[]{});
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertTrue(getDoubleField("pendingScrollRatio") < 0, "ratio marker cleared");
+    }
+
+    @Test
+    void captureNoneArmsNoPendingRestore() {
+        interact(() ->
+                invokePrivate("captureScroll", new Class<?>[]{scrollModeClass()}, scrollMode("NONE")));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertTrue(getDoubleField("pendingScrollRestore") < 0);
+        assertTrue(getDoubleField("pendingScrollRatio") < 0);
+    }
+
+    @Test
+    void scriptNumberReturnsValueForNumbersAndNaNForOthers() {
+        double number = fx(() ->
+                (Double) invokePrivate("scriptNumber", new Class<?>[]{String.class}, "2 + 3"));
+        assertClose(5.0, number);
+        double nan = fx(() ->
+                (Double) invokePrivate("scriptNumber", new Class<?>[]{String.class}, "'not a number'"));
+        assertTrue(Double.isNaN(nan), "non-numeric script result maps to NaN");
+    }
+
+    @Test
+    void captureAbsoluteScrollIgnoresNonNumericScrollY() {
+        interact(() -> {
+            // Shadow window.scrollY with a non-numeric getter so scriptNumber yields
+            // NaN; the absolute capture's NaN guard must then arm nothing.
+            engineExecute("Object.defineProperty(window, 'scrollY', "
+                    + "{configurable: true, get: function() { return 'not-a-number'; }});");
+            invokePrivate("captureScroll", new Class<?>[]{scrollModeClass()}, scrollMode("ABSOLUTE"));
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertTrue(getDoubleField("pendingScrollRestore") < 0, "NaN scrollY arms no restore");
+    }
+
+    @Test
+    void captureScrollSwallowsErrorsOffFxThread() {
+        // Off the FX thread, executeScript throws; captureScroll must absorb it and
+        // leave nothing armed (covers the catch in captureScroll).
+        invokePrivate("captureScroll", new Class<?>[]{scrollModeClass()}, scrollMode("ABSOLUTE"));
+        assertTrue(getDoubleField("pendingScrollRestore") < 0);
+        assertTrue(getDoubleField("pendingScrollRatio") < 0);
+    }
+
+    @Test
+    void restoreRatioScrollSwallowsErrorsOffFxThread() {
+        setDoubleField("pendingScrollRatio", 0.5);
+        setDoubleField("pendingScrollRestore", -1.0);
+        // Off the FX thread the scrollTo throws; the ratio marker is still cleared.
+        invokePrivate("restorePendingScroll", new Class<?>[]{});
+        assertTrue(getDoubleField("pendingScrollRatio") < 0);
+    }
+
+    @Test
+    void restoreAbsoluteScrollSwallowsErrorsOffFxThread() {
+        setDoubleField("pendingScrollRestore", 120.0);
+        setDoubleField("pendingScrollRatio", -1.0);
+        invokePrivate("restorePendingScroll", new Class<?>[]{});
+        assertTrue(getDoubleField("pendingScrollRestore") < 0);
+    }
+
+    @Test
+    void foldingRefreshesPreviewWithAbsoluteScrollMode() throws Exception {
+        // Right-clicking a heading folds its section, which re-renders with
+        // ScrollMode.ABSOLUTE (covers the applyFold call site).
+        Path file = writeMarkdown("fold.md", "# Alpha\n\nbody\n\n## Beta\n\nmore\n");
+        interact(() -> mainView.openFile(file.toFile()));
+        WaitForAsyncUtils.waitForFxEvents();
+        interact(() -> invokePrivate("toggleHeadingByIndex", new Class<?>[]{int.class}, 0));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertNotNull(fx(() -> root.getCenter()));
+        // An out-of-range index folds nothing (applyFold receives null and bails out).
+        interact(() -> invokePrivate("toggleHeadingByIndex", new Class<?>[]{int.class}, 99));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertNotNull(fx(() -> root.getCenter()));
+    }
+
+    // ----------------------------------------------------- reflection helpers
+
+    private static Class<?> scrollModeClass() {
+        try {
+            return Class.forName("com.markdownreader.ui.MainView$ScrollMode");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object scrollMode(String name) {
+        return Enum.valueOf((Class<? extends Enum>) scrollModeClass(), name);
+    }
+
+    private Object invokePrivate(String method, Class<?>[] types, Object... args) {
+        try {
+            Method m = MainView.class.getDeclaredMethod(method, types);
+            m.setAccessible(true);
+            return m.invoke(mainView, args);
+        } catch (InvocationTargetException e) {
+            throw new RuntimeException(e.getCause());
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Runs JS against the preview WebView (must be called on the FX thread). */
+    private void engineExecute(String js) {
+        try {
+            Field f = MainView.class.getDeclaredField("webView");
+            f.setAccessible(true);
+            javafx.scene.web.WebView wv = (javafx.scene.web.WebView) f.get(mainView);
+            wv.getEngine().executeScript(js);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void setDoubleField(String name, double value) {
+        try {
+            Field f = MainView.class.getDeclaredField(name);
+            f.setAccessible(true);
+            f.setDouble(mainView, value);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private double getDoubleField(String name) {
+        try {
+            Field f = MainView.class.getDeclaredField(name);
+            f.setAccessible(true);
+            return f.getDouble(mainView);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private static void assertClose(double expected, double actual) {
