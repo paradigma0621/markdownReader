@@ -17,6 +17,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationTest;
 import org.testfx.util.WaitForAsyncUtils;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -364,6 +366,63 @@ class MainViewTest extends ApplicationTest {
         interact(() -> mainView.requestFocus());
         WaitForAsyncUtils.waitForFxEvents();
         assertNotNull(fx(() -> scene.getRoot()));
+    }
+
+    // -------------------------------------------------- in-page anchor navigation
+
+    /**
+     * Opens a document containing an in-page anchor link ({@code [..](#fragment)}) and a
+     * matching heading, then re-installs the preview bridges on the FX thread. This drives
+     * the load-worker wiring that injects {@code ANCHOR_NAV_JS} into the freshly loaded
+     * page, so a fragment click is wired to scroll the preview to the heading.
+     */
+    @Test
+    void inPageAnchorLinkWiringInstallsWithoutError() {
+        Path file;
+        try {
+            file = writeMarkdown("anchor.md",
+                    "# Voice Gemini\n\njump to [the section](#8-voice-gemini)\n\n## 8 Voice Gemini\n\nhere\n");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        interact(() -> mainView.openFile(file.toFile()));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        // Re-run the bridge install path explicitly (the same call the SUCCEEDED load-worker
+        // state makes), which injects ANCHOR_NAV_JS. It must complete without throwing.
+        interact(() -> {
+            try {
+                Method m = MainView.class.getDeclaredMethod("installPreviewFoldBridge");
+                m.setAccessible(true);
+                m.invoke(mainView);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertTrue(fx(() -> toc().getItems().size()) >= 2, "both headings should be listed");
+        assertTrue(fx(() -> stage.getTitle()).contains("anchor.md"));
+    }
+
+    /**
+     * Locks the {@code ANCHOR_NAV_JS} contract: it must resolve a fragment by id, then by
+     * name, then by a slug comparison, skip a heading's own self-link, and scroll the
+     * resolved target into view.
+     */
+    @Test
+    void anchorNavScriptDefinesResolutionAndScrollContract() throws Exception {
+        Field f = MainView.class.getDeclaredField("ANCHOR_NAV_JS");
+        f.setAccessible(true);
+        String js = (String) f.get(null);
+
+        assertNotNull(js);
+        assertTrue(js.contains("getElementById"), "should try id resolution first");
+        assertTrue(js.contains("getElementsByName"), "should fall back to name resolution");
+        assertTrue(js.contains("function slugify"), "should slug-compare heading text");
+        assertTrue(js.contains("decodeURIComponent"), "should decode the fragment");
+        assertTrue(js.contains("closest('h1,h2,h3,h4,h5,h6')"), "should skip heading self-links");
+        assertTrue(js.contains("scrollIntoView"), "should scroll the resolved heading into view");
     }
 
     private static void assertNotEquals(boolean unexpected, boolean actual, String message) {
