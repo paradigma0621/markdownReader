@@ -224,6 +224,57 @@
     -fx-padding: 6 10 6 10;
 }
 
+/* ---------------------------- Settings dialog ---------------------------- */
+.settings-pane {
+    -fx-background-color: -bg;
+}
+.settings-title {
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -text;
+    -fx-padding: 0 0 4 0;
+}
+.settings-label {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -text-dim;
+}
+.settings-value {
+    -fx-font-size: 13px;
+    -fx-text-fill: -text;
+}
+.settings-pane .check-box {
+    -fx-text-fill: -text;
+    -fx-font-size: 13px;
+}
+.settings-pane .check-box .box {
+    -fx-background-color: -bg-alt;
+    -fx-border-color: -border;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
+}
+.settings-pane .check-box:selected .mark {
+    -fx-background-color: -accent-fg;
+}
+.settings-pane .check-box:selected .box {
+    -fx-background-color: -accent;
+    -fx-border-color: -accent;
+}
+.settings-pane .spinner {
+    -fx-background-color: -bg-alt;
+    -fx-border-color: -border;
+    -fx-border-radius: 6px;
+    -fx-background-radius: 6px;
+}
+.settings-pane .spinner .text-field {
+    -fx-background-color: transparent;
+    -fx-text-fill: -text;
+}
+.settings-pane .separator .line {
+    -fx-border-color: -border;
+    -fx-border-width: 1 0 0 0;
+}
+
 /* ---------------------------- Scrollbars ---------------------------- */
 .scroll-bar {
     -fx-background-color: transparent;

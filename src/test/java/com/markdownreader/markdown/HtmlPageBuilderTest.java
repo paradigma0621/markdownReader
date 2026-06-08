@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -16,6 +17,14 @@ class HtmlPageBuilderTest {
     @BeforeEach
     void setUp() {
         builder = new HtmlPageBuilder();
+    }
+
+    /**
+     * True when {@code html} contains a plain {@code <pre>...<code>content} fence, tolerating
+     * block-level attributes (e.g. the {@code data-source-line} the preview-editor sync adds).
+     */
+    private static boolean hasPlainPreCode(String html, String content) {
+        return Pattern.compile("<pre[^>]*><code>" + Pattern.quote(content)).matcher(html).find();
     }
 
     @Test
@@ -180,7 +189,7 @@ class HtmlPageBuilderTest {
     void fencedBlockWithoutLanguageHasNoLanguageClass() {
         MarkdownRenderer renderer = new MarkdownRenderer();
         String body = renderer.render("```\nplain block\n```\n").html();
-        assertTrue(body.contains("<pre><code>"),
+        assertTrue(hasPlainPreCode(body, "plain block"),
                 "Expected a plain <pre><code> (no language) block, got: " + body);
         assertFalse(body.contains("language-"),
                 "An untagged fence must not carry any language- class, got: " + body);
@@ -234,11 +243,11 @@ class HtmlPageBuilderTest {
         String html = builder.build(body, Theme.DARK, 1.0);
         // The rendered fence must be a <pre><code> with no language- token in the body,
         // so the bootstrap marks it plaintext-note instead of auto-detecting it.
-        assertTrue(html.contains("<pre><code>plain block"),
+        assertTrue(hasPlainPreCode(html, "plain block"),
                 "Untagged fence must render as a plain <pre><code> block");
         // The only `language-` token in the document is the literal in our bootstrap
         // regex; the rendered block must not carry one.
-        assertTrue(body.contains("<pre><code>") && !body.contains("language-"),
+        assertTrue(hasPlainPreCode(body, "plain block") && !body.contains("language-"),
                 "Untagged fence body must carry no language- class, got: " + body);
     }
 

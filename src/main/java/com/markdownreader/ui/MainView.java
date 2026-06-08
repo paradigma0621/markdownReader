@@ -12,15 +12,19 @@ import javafx.beans.property.SimpleDoubleProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.Separator;
 import javafx.scene.control.ScrollBar;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.Spinner;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.DragEvent;
@@ -37,12 +41,14 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
+import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 import netscape.javascript.JSObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
@@ -57,6 +63,11 @@ public final class MainView {
     private static final double MIN_SCALE = 0.6;
     private static final double MAX_SCALE = 2.4;
     private static final double SCALE_STEP = 0.1;
+
+    /** Editor font-size bounds and default (in CSS pixels). */
+    private static final int MIN_EDITOR_FONT = 8;
+    private static final int MAX_EDITOR_FONT = 40;
+    private static final int DEFAULT_EDITOR_FONT = 14;
 
     private final Stage stage;
     private final Preferences prefs = Preferences.userNodeForPackage(MainView.class);
@@ -84,6 +95,11 @@ public final class MainView {
     private boolean focusMode = false;
     private boolean fullscreenMode = false;
 
+    /** Editor font size in pixels (persisted, applied live to {@link #editorArea}). */
+    private int editorFontSize;
+    /** Whether the preview's vertical scrollbar is shown in F12 fullscreen mode. */
+    private boolean f12PreviewScrollbar;
+
     /** Top/bottom chrome, kept so it can be detached/restored in fullscreen mode. */
     private Node toolbar;
     private Node statusBar;
@@ -106,9 +122,12 @@ public final class MainView {
         // Always start in the light theme, regardless of the last session's choice.
         this.theme = Theme.LIGHT;
         this.fontScale.set(prefs.getDouble("fontScale", 1.0));
+        this.editorFontSize = clampFont(prefs.getInt("editorFontSize", DEFAULT_EDITOR_FONT));
+        this.f12PreviewScrollbar = prefs.getBoolean("f12PreviewScrollbar", true);
 
         buildLayout();
         applyThemeToRoot();
+        applyEditorFontSize();
         showWelcome();
         registerShortcuts();
         enableDragAndDrop();
@@ -168,6 +187,9 @@ public final class MainView {
         zoomLabel.setOnMouseClicked(e -> resetScale());
         Tooltip.install(zoomLabel, new Tooltip("Click to reset zoom (100%)"));
 
+        Button settingsBtn = iconButton("⚙", "Settings", e -> openSettings());
+        settingsBtn.setId("settings-button");
+
         Button themeBtn = iconButton(themeGlyph(), "Toggle light/dark theme  (Ctrl+T)", e -> toggleTheme());
         themeBtn.setId("theme-button");
 
@@ -182,7 +204,7 @@ public final class MainView {
                 separator(), newBtn, editBtn, saveBtn, focusModeBtn, fullscreenBtn,
                 separator(), collapseAllBtn, expandAllBtn,
                 separator(), zoomOutBtn, zoomLabel, zoomInBtn,
-                spacer, title, separator(), themeBtn);
+                spacer, title, separator(), settingsBtn, themeBtn);
         bar.getStyleClass().add("toolbar");
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8, 14, 8, 14));
@@ -198,6 +220,9 @@ public final class MainView {
             if (state == Worker.State.SUCCEEDED) {
                 installPreviewFoldBridge();
                 restorePendingScroll();
+                // The page just reloaded; re-apply the F12 scrollbar preference so the
+                // injected style survives folding/zoom-driven preview reloads.
+                applyF12Scrollbar();
             }
         });
 
@@ -537,8 +562,7 @@ public final class MainView {
             + "    (function(h, idx) {"
             + "      h.style.cursor = 'pointer';"
             + "      h.title = 'Click to fold/unfold this section';"
-            // Ignore the second click of a double-click so a dbl-click folds at most once.
-            + "      h.addEventListener('click', function(e) { if (e.detail > 1) return; toggle(idx, e); });"
+            + "      h.addEventListener('click', function(e) { toggle(idx, e); });"
             + "      h.addEventListener('contextmenu', function(e) { toggle(idx, e); });"
             + "    })(hs[i], i);"
             + "  }"
@@ -663,6 +687,125 @@ public final class MainView {
             }
         }
         return Math.min(offset, text.length());
+    }
+
+    // -------------------------------------------------------------- settings
+
+    /** JS that injects a style element hiding the preview's vertical scrollbar. */
+    private static final String HIDE_SCROLLBAR_JS =
+            "(function() {"
+            + "  if (!document.getElementById('md-hide-sb')) {"
+            + "    var s = document.createElement('style');"
+            + "    s.id = 'md-hide-sb';"
+            + "    s.textContent = '::-webkit-scrollbar{width:0;height:0;display:none}"
+            + "html{scrollbar-width:none}body{overflow-y:hidden}';"
+            + "    (document.head || document.documentElement).appendChild(s);"
+            + "  }"
+            + "})();";
+
+    /** JS that removes the scrollbar-hiding style element, restoring the scrollbar. */
+    private static final String SHOW_SCROLLBAR_JS =
+            "(function() {"
+            + "  var s = document.getElementById('md-hide-sb');"
+            + "  if (s && s.parentNode) { s.parentNode.removeChild(s); }"
+            + "})();";
+
+    /**
+     * Opens the modal Settings dialog. Each control applies and persists its value
+     * immediately, so changes are visible live without an explicit "Apply" step.
+     */
+    private void openSettings() {
+        Stage dialog = new Stage();
+        dialog.initOwner(stage);
+        dialog.initModality(Modality.APPLICATION_MODAL);
+        dialog.setTitle("Settings");
+
+        Label header = new Label("Settings");
+        header.getStyleClass().add("settings-title");
+
+        // (a) Editor font size -------------------------------------------------
+        Label fontLabel = new Label("Editor font size");
+        fontLabel.getStyleClass().add("settings-label");
+        Spinner<Integer> fontSpinner = new Spinner<>(MIN_EDITOR_FONT, MAX_EDITOR_FONT, editorFontSize);
+        fontSpinner.setEditable(true);
+        fontSpinner.setPrefWidth(90);
+        Label fontValue = new Label(editorFontSize + " px");
+        fontValue.getStyleClass().add("settings-value");
+        fontSpinner.valueProperty().addListener((obs, was, val) -> {
+            if (val == null) {
+                return;
+            }
+            editorFontSize = clampFont(val);
+            prefs.putInt("editorFontSize", editorFontSize);
+            applyEditorFontSize();
+            fontValue.setText(editorFontSize + " px");
+        });
+        HBox fontRow = new HBox(12, fontSpinner, fontValue);
+        fontRow.setAlignment(Pos.CENTER_LEFT);
+
+        // (b) F12 fullscreen preview scrollbar visibility ----------------------
+        Label scrollbarLabel = new Label("F12 fullscreen preview");
+        scrollbarLabel.getStyleClass().add("settings-label");
+        CheckBox scrollbarCheck =
+                new CheckBox("Show the preview scrollbar in F12 fullscreen mode");
+        scrollbarCheck.setSelected(f12PreviewScrollbar);
+        scrollbarCheck.selectedProperty().addListener((obs, was, sel) -> {
+            f12PreviewScrollbar = sel;
+            prefs.putBoolean("f12PreviewScrollbar", sel);
+            applyF12Scrollbar();
+        });
+
+        Button closeBtn = new Button("Close");
+        closeBtn.getStyleClass().add("primary-button");
+        closeBtn.setOnAction(e -> dialog.close());
+        HBox actions = new HBox(closeBtn);
+        actions.setAlignment(Pos.CENTER_RIGHT);
+
+        VBox box = new VBox(14,
+                header,
+                fontLabel, fontRow,
+                new Separator(),
+                scrollbarLabel, scrollbarCheck,
+                new Separator(),
+                actions);
+        box.getStyleClass().add("settings-pane");
+        box.setPadding(new Insets(22));
+        // Reuse the application's CSS variables and theme so the dialog matches the
+        // current light/dark look.
+        box.getStyleClass().add("app-root");
+        box.getStyleClass().add(theme == Theme.DARK ? "theme-dark" : "theme-light");
+
+        Scene scene = new Scene(box);
+        URL css = MainView.class.getResource("/css/app.css");
+        if (css != null) {
+            scene.getStylesheets().add(css.toExternalForm());
+        }
+        dialog.setScene(scene);
+        dialog.setMinWidth(380);
+        dialog.showAndWait();
+    }
+
+    /** Applies the current editor font size to the {@link #editorArea} via inline CSS. */
+    private void applyEditorFontSize() {
+        editorArea.setStyle("-fx-font-size: " + editorFontSize + "px;");
+    }
+
+    /**
+     * Shows or hides the preview's vertical scrollbar to match the F12 preference.
+     * The scrollbar is only hidden while in F12 fullscreen mode and the preference is
+     * disabled; in every other situation the normal scrollbar is restored.
+     */
+    private void applyF12Scrollbar() {
+        boolean hide = fullscreenMode && !f12PreviewScrollbar;
+        try {
+            webView.getEngine().executeScript(hide ? HIDE_SCROLLBAR_JS : SHOW_SCROLLBAR_JS);
+        } catch (Exception ignored) {
+            // page not ready or scripting unavailable; re-applied on next load
+        }
+    }
+
+    private static int clampFont(int v) {
+        return Math.max(MIN_EDITOR_FONT, Math.min(MAX_EDITOR_FONT, v));
     }
 
     /** Saves the current text to the open file; prompts for a destination if none exists. */
@@ -897,6 +1040,8 @@ public final class MainView {
             }
             root.getStyleClass().remove("fullscreen-mode");
         }
+        // Hide/restore the preview scrollbar according to the F12 preference.
+        applyF12Scrollbar();
         updateFullscreenButton();
     }
 
