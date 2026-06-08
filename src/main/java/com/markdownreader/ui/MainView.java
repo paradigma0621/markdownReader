@@ -18,6 +18,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -27,6 +28,7 @@ import javafx.scene.control.SplitPane;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
+import javafx.scene.text.Font;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
@@ -68,6 +70,8 @@ public final class MainView {
     private static final int MIN_EDITOR_FONT = 8;
     private static final int MAX_EDITOR_FONT = 40;
     private static final int DEFAULT_EDITOR_FONT = 14;
+    /** Default editor font family — matches the first entry in the app.css monospace stack. */
+    private static final String DEFAULT_EDITOR_FONT_FAMILY = "monospace";
 
     private final Stage stage;
     private final Preferences prefs = Preferences.userNodeForPackage(MainView.class);
@@ -97,6 +101,8 @@ public final class MainView {
 
     /** Editor font size in pixels (persisted, applied live to {@link #editorArea}). */
     private int editorFontSize;
+    /** Editor font family name (persisted, applied live to {@link #editorArea}). */
+    private String editorFontFamily;
     /** Whether the preview's vertical scrollbar is shown in F12 fullscreen mode. */
     private boolean f12PreviewScrollbar;
 
@@ -135,10 +141,16 @@ public final class MainView {
 
     public MainView(Stage stage) {
         this.stage = stage;
-        // Always start in the light theme, regardless of the last session's choice.
-        this.theme = Theme.LIGHT;
+        // Restore the theme from the last session; default to LIGHT if no pref exists.
+        String savedTheme = prefs.get("theme", Theme.LIGHT.name());
+        try {
+            this.theme = Theme.valueOf(savedTheme);
+        } catch (IllegalArgumentException ignored) {
+            this.theme = Theme.LIGHT;
+        }
         this.fontScale.set(prefs.getDouble("fontScale", 1.0));
         this.editorFontSize = clampFont(prefs.getInt("editorFontSize", DEFAULT_EDITOR_FONT));
+        this.editorFontFamily = prefs.get("editorFontFamily", DEFAULT_EDITOR_FONT_FAMILY);
         this.f12PreviewScrollbar = prefs.getBoolean("f12PreviewScrollbar", true);
 
         buildLayout();
@@ -825,7 +837,23 @@ public final class MainView {
         HBox fontRow = new HBox(12, fontSpinner, fontValue);
         fontRow.setAlignment(Pos.CENTER_LEFT);
 
-        // (b) F12 fullscreen preview scrollbar visibility ----------------------
+        // (b) Editor font family -----------------------------------------------
+        Label fontFamilyLabel = new Label("Editor font family");
+        fontFamilyLabel.getStyleClass().add("settings-label");
+        ComboBox<String> fontFamilyCombo = new ComboBox<>();
+        fontFamilyCombo.getItems().setAll(Font.getFamilies());
+        fontFamilyCombo.setValue(editorFontFamily);
+        fontFamilyCombo.setPrefWidth(260);
+        fontFamilyCombo.valueProperty().addListener((obs, was, val) -> {
+            if (val == null || val.isBlank()) {
+                return;
+            }
+            editorFontFamily = val;
+            prefs.put("editorFontFamily", editorFontFamily);
+            applyEditorFontSize();
+        });
+
+        // (c) F12 fullscreen preview scrollbar visibility ----------------------
         Label scrollbarLabel = new Label("F12 fullscreen preview");
         scrollbarLabel.getStyleClass().add("settings-label");
         CheckBox scrollbarCheck =
@@ -846,6 +874,7 @@ public final class MainView {
         VBox box = new VBox(14,
                 header,
                 fontLabel, fontRow,
+                fontFamilyLabel, fontFamilyCombo,
                 new Separator(),
                 scrollbarLabel, scrollbarCheck,
                 new Separator(),
@@ -867,9 +896,11 @@ public final class MainView {
         dialog.showAndWait();
     }
 
-    /** Applies the current editor font size to the {@link #editorArea} via inline CSS. */
+    /** Applies the current editor font size and family to the {@link #editorArea} via inline CSS. */
     private void applyEditorFontSize() {
-        editorArea.setStyle("-fx-font-size: " + editorFontSize + "px;");
+        editorArea.setStyle(
+                "-fx-font-family: \"" + editorFontFamily + "\";"
+                + " -fx-font-size: " + editorFontSize + "px;");
     }
 
     /**
