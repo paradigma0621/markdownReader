@@ -116,6 +116,22 @@ public final class MainView {
     private boolean suppressEditorListener = false;
     /** Scroll position to restore after the next preview reload ({@code < 0} = none). */
     private double pendingScrollRestore = -1;
+    /**
+     * Scroll fraction (0..1 of the scrollable range) to restore after the next preview
+     * reload ({@code < 0} = none). Used by zoom, where the font-size change alters the
+     * document height, so an absolute scrollY would not keep the same passage in view.
+     */
+    private double pendingScrollRatio = -1;
+
+    /** How the scroll position should be preserved across a preview reload. */
+    private enum ScrollMode {
+        /** Reset to the top of the document. */
+        NONE,
+        /** Restore the exact {@code window.scrollY} (used by heading folding). */
+        ABSOLUTE,
+        /** Restore the same fraction of the scrollable range (used by zoom). */
+        RATIO
+    }
 
     public MainView(Stage stage) {
         this.stage = stage;
@@ -351,34 +367,67 @@ public final class MainView {
     }
 
     private void refreshPreview() {
-        refreshPreview(false);
+        refreshPreview(ScrollMode.NONE);
     }
 
     /**
      * Renders the preview from the current (possibly folded) editor view, so collapsed
      * sections are hidden in the styled output as well.
      *
-     * @param preserveScroll when {@code true}, the current scroll position is captured
-     *        and restored after the reload, so folding/unfolding doesn't jump back to
-     *        the top of the document.
+     * @param mode how the scroll position should be preserved across the reload:
+     *        {@link ScrollMode#NONE} jumps to the top, {@link ScrollMode#ABSOLUTE}
+     *        keeps the exact {@code scrollY} (folding) and {@link ScrollMode#RATIO}
+     *        keeps the same fraction of the scrollable range (zoom, where the
+     *        document height changes with the font size).
      */
-    private void refreshPreview(boolean preserveScroll) {
-        if (preserveScroll) {
-            try {
-                Object y = webView.getEngine().executeScript("window.scrollY");
-                pendingScrollRestore = (y instanceof Number n) ? n.doubleValue() : -1;
-            } catch (Exception e) {
-                pendingScrollRestore = -1;
-            }
-        }
+    private void refreshPreview(ScrollMode mode) {
+        captureScroll(mode);
         RenderResult result = renderer.render(folder.displayText(editorArea.getText()));
         String page = pageBuilder.build(result.html(), theme, fontScale.get());
         webView.getEngine().loadContent(page, "text/html");
         tocList.getItems().setAll(result.headings());
     }
 
-    /** Restores the scroll position captured before a fold-driven preview reload. */
+    /**
+     * Captures the current scroll state so it can be re-applied once the new content
+     * has laid out. Exactly one pending restore is armed at a time.
+     */
+    private void captureScroll(ScrollMode mode) {
+        pendingScrollRestore = -1;
+        pendingScrollRatio = -1;
+        try {
+            if (mode == ScrollMode.ABSOLUTE) {
+                double y = scriptNumber("window.scrollY");
+                pendingScrollRestore = Double.isNaN(y) ? -1 : y;
+            } else if (mode == ScrollMode.RATIO) {
+                double y = scriptNumber("window.scrollY");
+                double scrollHeight = scriptNumber("document.documentElement.scrollHeight");
+                double clientHeight = scriptNumber("window.innerHeight");
+                pendingScrollRatio = scrollRatio(y, scrollHeight, clientHeight);
+            }
+        } catch (Exception e) {
+            pendingScrollRestore = -1;
+            pendingScrollRatio = -1;
+        }
+    }
+
+    /**
+     * Restores the scroll position captured before the last preview reload. Folding
+     * restores the exact pixel offset; zoom restores the same fraction of the (now
+     * differently sized) document, computed against the new layout height.
+     */
     private void restorePendingScroll() {
+        if (pendingScrollRatio >= 0) {
+            try {
+                double scrollHeight = scriptNumber("document.documentElement.scrollHeight");
+                double clientHeight = scriptNumber("window.innerHeight");
+                double target = scrollTargetForRatio(pendingScrollRatio, scrollHeight, clientHeight);
+                webView.getEngine().executeScript("window.scrollTo(0, " + (long) target + ");");
+            } catch (Exception ignored) {
+                // page not ready
+            }
+            pendingScrollRatio = -1;
+        }
         if (pendingScrollRestore >= 0) {
             try {
                 webView.getEngine().executeScript(
@@ -388,6 +437,38 @@ public final class MainView {
             }
             pendingScrollRestore = -1;
         }
+    }
+
+    /** Runs a JS expression and returns its numeric value, or {@code NaN} if not a number. */
+    private double scriptNumber(String js) {
+        Object r = webView.getEngine().executeScript(js);
+        return (r instanceof Number n) ? n.doubleValue() : Double.NaN;
+    }
+
+    /**
+     * Fraction (0..1) of the scrollable range currently scrolled. Returns 0 when the
+     * document is not taller than the viewport (nothing to scroll), guarding against
+     * division by zero.
+     */
+    static double scrollRatio(double scrollY, double scrollHeight, double clientHeight) {
+        double max = scrollHeight - clientHeight;
+        if (Double.isNaN(max) || max <= 0) {
+            return 0.0;
+        }
+        return clamp(scrollY / max, 0.0, 1.0);
+    }
+
+    /**
+     * Absolute scroll offset that places {@code ratio} of the (new) scrollable range
+     * into view. Inverse of {@link #scrollRatio}; returns 0 when there is nothing to
+     * scroll.
+     */
+    static double scrollTargetForRatio(double ratio, double scrollHeight, double clientHeight) {
+        double max = scrollHeight - clientHeight;
+        if (Double.isNaN(max) || max <= 0) {
+            return 0.0;
+        }
+        return clamp(ratio, 0.0, 1.0) * max;
     }
 
     private void loadEmbeddedSample() {
@@ -497,7 +578,7 @@ public final class MainView {
         editorArea.setText(r.text());
         editorArea.positionCaret(r.caret());
         suppressEditorListener = false;
-        refreshPreview(true); // keep the preview where it is; only the section changes
+        refreshPreview(ScrollMode.ABSOLUTE); // keep the preview where it is; only the section changes
         return true;
     }
 
@@ -950,20 +1031,30 @@ public final class MainView {
         fontScale.set(Math.round(next * 100) / 100.0);
         prefs.putDouble("fontScale", fontScale.get());
         zoomLabel.setText(Math.round(fontScale.get() * 100) + "%");
-        rerenderCurrent();
+        rerenderPreservingRatio();
     }
 
     private void resetScale() {
         fontScale.set(1.0);
         prefs.putDouble("fontScale", 1.0);
         zoomLabel.setText("100%");
-        rerenderCurrent();
+        rerenderPreservingRatio();
     }
 
     private void rerenderCurrent() {
         // Re-renders in-memory content (preserves unsaved edits and the current fold
         // state); unlike reloadCurrent(), which re-reads the file from disk.
         refreshPreview();
+    }
+
+    /**
+     * Re-renders the in-memory content while keeping the reader anchored on the same
+     * passage. Zoom changes the root font size (and thus the document height), so the
+     * scroll position is preserved as a fraction of the scrollable range rather than an
+     * absolute pixel offset, which would otherwise drift the content out of view.
+     */
+    private void rerenderPreservingRatio() {
+        refreshPreview(ScrollMode.RATIO);
     }
 
     private void toggleSidebar() {
