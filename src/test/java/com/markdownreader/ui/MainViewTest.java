@@ -366,6 +366,44 @@ class MainViewTest extends ApplicationTest {
         assertNotNull(fx(() -> scene.getRoot()));
     }
 
+    // ---- zoom-preserving scroll math (pure, headless-verifiable) ----------
+    //
+    // The live WebView scroll cannot be asserted headlessly, so the position
+    // restore itself is manual-verify; these tests pin the ratio math that
+    // drives it (capture before reload, re-apply against the new height).
+
+    @Test
+    void scrollRatioReturnsFractionOfScrollableRange() {
+        // Halfway down a 1000px document in a 200px viewport: max scroll = 800.
+        assertClose(0.5, MainView.scrollRatio(400, 1000, 200));
+    }
+
+    @Test
+    void scrollRatioClampsAndGuardsZeroHeight() {
+        // Document not taller than the viewport: nothing to scroll -> 0, no divide-by-zero.
+        assertClose(0.0, MainView.scrollRatio(0, 100, 200));
+        // Out-of-range scrollY is clamped into 0..1.
+        assertClose(1.0, MainView.scrollRatio(99999, 1000, 200));
+    }
+
+    @Test
+    void scrollTargetForRatioMapsBackToTallerDocument() {
+        // Same 0.5 fraction applied after a zoom that grew the document to 2000px.
+        assertClose(900.0, MainView.scrollTargetForRatio(0.5, 2000, 200));
+        // Ratio survives a round-trip through both helpers at a new height.
+        double ratio = MainView.scrollRatio(400, 1000, 200);
+        assertClose(720.0, MainView.scrollTargetForRatio(ratio, 1800, 360));
+    }
+
+    @Test
+    void scrollTargetForRatioGuardsZeroHeight() {
+        assertClose(0.0, MainView.scrollTargetForRatio(0.5, 100, 200));
+    }
+
+    private static void assertClose(double expected, double actual) {
+        org.junit.jupiter.api.Assertions.assertEquals(expected, actual, 1e-9);
+    }
+
     private static void assertNotEquals(boolean unexpected, boolean actual, String message) {
         assertTrue(unexpected != actual, message);
     }
