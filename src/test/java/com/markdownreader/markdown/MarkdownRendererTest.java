@@ -208,4 +208,88 @@ class MarkdownRendererTest {
         assertNotNull(renderer.render("").html());
         assertNotNull(renderer.render("# Hello").html());
     }
+
+    // ---- Heading id slugging (locks the contract used by anchor navigation) ----
+
+    @Test
+    void headingWithDigitsDotsAndSlashesGetsGithubStyleSlug() {
+        RenderResult result = renderer.render("## 8. /voice (Gemini)\n");
+        Heading h = result.headings().get(0);
+        // This exact slug is what an in-document link `#8-voice-gemini` must resolve to.
+        assertEquals("8-voice-gemini", h.id());
+        assertTrue(result.html().contains("id=\"8-voice-gemini\""),
+                "rendered heading should carry the generated id");
+        assertTrue(result.html().contains("href=\"#8-voice-gemini\""),
+                "the heading's own anchor href should match its id");
+    }
+
+    @Test
+    void headingIdLowercasesAndStripsPunctuation() {
+        assertEquals("hello-world", renderer.render("# Hello World!\n").headings().get(0).id());
+    }
+
+    @Test
+    void headingIdKeepsUnicodeAndDoesNotCollapseHyphens() {
+        // flexmark keeps unicode letters and does NOT collapse repeated hyphens.
+        assertEquals("café--tea", renderer.render("## Café & Tea\n").headings().get(0).id());
+    }
+
+    @Test
+    void duplicateHeadingsGetDistinctIds() {
+        RenderResult result = renderer.render("## Foo Bar\n\n## Foo Bar\n");
+        assertEquals("foo-bar", result.headings().get(0).id());
+        assertEquals("foo-bar-1", result.headings().get(1).id());
+    }
+
+    @Test
+    void inDocumentLinkFragmentMatchesGeneratedHeadingId() {
+        // The user writes a GitHub-style fragment; it must equal the generated id so that
+        // getElementById in the preview can resolve it.
+        RenderResult result = renderer.render(
+                "## 8. /voice (Gemini)\n\n[jump](#8-voice-gemini)\n");
+        assertEquals("8-voice-gemini", result.headings().get(0).id());
+        assertTrue(result.html().contains("href=\"#8-voice-gemini\""));
+    }
+
+    @Test
+    void consecutiveSpacesBecomeRepeatedHyphensNotCollapsed() {
+        // Mirrors the anchor-nav JS slugify fallback: every space turns into a hyphen and
+        // repeated hyphens are NOT collapsed, so the JS slug of a heading's text matches
+        // flexmark's id even with multiple spaces.
+        assertEquals("a--b", renderer.render("## A  B\n").headings().get(0).id());
+    }
+
+    @Test
+    void headingIdKeepsDigitsAndDropsDots() {
+        // Digits are retained (\p{N}); dots are stripped — locks the version-style slug.
+        assertEquals("version-20", renderer.render("## Version 2.0\n").headings().get(0).id());
+    }
+
+    @Test
+    void threeDuplicateHeadingsIncrementSequentially() {
+        RenderResult result = renderer.render("## Foo\n\n## Foo\n\n## Foo\n");
+        assertEquals("foo", result.headings().get(0).id());
+        assertEquals("foo-1", result.headings().get(1).id());
+        assertEquals("foo-2", result.headings().get(2).id());
+    }
+
+    @Test
+    void headingSelfAnchorIsNestedInsideTheHeadingWithMatchingHref() {
+        // The heading's own self-link lives INSIDE the <h2>; this is the contract the
+        // anchor-nav JS relies on to SKIP self-links (via a.closest('h1..h6')) so that a
+        // click on a heading still folds its section instead of scrolling to itself.
+        String html = renderer.render("## Section One\n").html();
+        assertTrue(html.contains("<h2 id=\"section-one\"><a href=\"#section-one\""),
+                "self-anchor should be the heading's first child with a matching href: " + html);
+    }
+
+    @Test
+    void punctuationOnlyHeadingProducesEmptySlugAndBareFragment() {
+        // The empty-slug edge case the JS slugify can also yield: a heading made only of
+        // punctuation has no id and renders an href="#" self-link (nothing to navigate to).
+        RenderResult result = renderer.render("## !!!\n");
+        assertEquals("", result.headings().get(0).id());
+        assertTrue(result.html().contains("<h2><a href=\"#\">"),
+                "punctuation-only heading should render a bare href=\"#\": " + result.html());
+    }
 }
