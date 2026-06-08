@@ -773,14 +773,19 @@ public final class MainView {
 
     // -------------------------------------------------------------- settings
 
-    /** JS that injects a style element hiding the preview's vertical scrollbar. */
+    /**
+     * JS that injects a style element hiding the preview's vertical scrollbar.
+     * Only the scrollbar track/thumb is hidden; overflow is intentionally left
+     * as the default (auto/scroll) so mouse-wheel and keyboard scrolling keep
+     * working even when the bar is invisible.
+     */
     private static final String HIDE_SCROLLBAR_JS =
             "(function() {"
             + "  if (!document.getElementById('md-hide-sb')) {"
             + "    var s = document.createElement('style');"
             + "    s.id = 'md-hide-sb';"
             + "    s.textContent = '::-webkit-scrollbar{width:0;height:0;display:none}"
-            + "html{scrollbar-width:none}body{overflow-y:hidden}';"
+            + "html{scrollbar-width:none}';"
             + "    (document.head || document.documentElement).appendChild(s);"
             + "  }"
             + "})();";
