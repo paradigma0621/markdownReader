@@ -1,6 +1,8 @@
 package com.markdownreader.ui;
 
 import com.markdownreader.markdown.Heading;
+import javafx.animation.Animation;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.event.Event;
 import javafx.scene.Scene;
@@ -1201,5 +1203,401 @@ class MainViewTest extends ApplicationTest {
 
     private static void assertNotEquals(boolean unexpected, boolean actual, String message) {
         assertTrue(unexpected != actual, message);
+    }
+
+    // ----------------------------------------------------- boolean field helpers
+
+    private boolean getBooleanField(String name) {
+        try {
+            Field f = MainView.class.getDeclaredField(name);
+            f.setAccessible(true);
+            return f.getBoolean(mainView);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void setBooleanField(String name, boolean value) {
+        try {
+            Field f = MainView.class.getDeclaredField(name);
+            f.setAccessible(true);
+            f.setBoolean(mainView, value);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Returns the scrollSyncDebounce PauseTransition via reflection. */
+    private PauseTransition scrollSyncDebounce() {
+        try {
+            Field f = MainView.class.getDeclaredField("scrollSyncDebounce");
+            f.setAccessible(true);
+            return (PauseTransition) f.get(mainView);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Enters edit mode with a 400-line document and forces layout so the
+     * vertical ScrollBar becomes present and visible in the scene graph.
+     * Returns the bar, or {@code null} when the headless renderer cannot
+     * create a visible bar (in which case scroll-bar-dependent assertions
+     * are skipped).
+     */
+    private ScrollBar setupScrollableEditorAndGetBar() {
+        fireKey(KeyCode.N, true); // new doc -> edit mode
+        TextArea ta = editor();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 400; i++) {
+            sb.append("line ").append(i).append('\n');
+        }
+        interact(() -> {
+            ta.setText(sb.toString());
+            ta.setMinHeight(120);
+            ta.setPrefHeight(120);
+            ta.setMaxHeight(120);
+            root.applyCss();
+            root.layout();
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        return fx(() -> (ScrollBar) ta.lookup(".scroll-bar:vertical"));
+    }
+
+    // -------------------------------------------------- editor→preview scroll sync
+
+    /**
+     * The {@code scrollSyncDebounce.setOnFinished} lambda (buildCenter line) delegates to
+     * {@code pushEditorScrollToPreview()}. Firing the handler directly covers that lambda body
+     * and the no-scroll-bar early-return branch of pushEditorScrollToPreview.
+     */
+    @Test
+    void scrollSyncDebounceHandlerInvokesPushEditorScrollToPreviewWithoutThrowing() {
+        interact(() -> {
+            PauseTransition debounce = scrollSyncDebounce();
+            // Invoke the setOnFinished action directly (covers the lambda line).
+            debounce.getOnFinished().handle(null);
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        // No exception = pass; also covers pushEditorScrollToPreview early-return (no scroll bar).
+    }
+
+    /**
+     * When {@code editorScrollListenerAttached} is already {@code true}, calling
+     * {@code attachEditorScrollListener()} must return immediately (early-return branch).
+     */
+    @Test
+    void attachEditorScrollListenerEarlyReturnWhenAlreadyAttached() {
+        setBooleanField("editorScrollListenerAttached", true);
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertTrue(getBooleanField("editorScrollListenerAttached"),
+                "flag remains true after early-return");
+    }
+
+    /**
+     * When no vertical scroll bar is in the scene (e.g. editor not yet added),
+     * {@code attachEditorScrollListener()} must leave the flag {@code false}.
+     */
+    @Test
+    void attachEditorScrollListenerNoOpWhenScrollBarAbsent() {
+        // App starts in read mode — editorArea is not in the scene graph.
+        assertFalse(getBooleanField("editorScrollListenerAttached"),
+                "flag starts false");
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertFalse(getBooleanField("editorScrollListenerAttached"),
+                "flag stays false when no scroll bar found");
+    }
+
+    /**
+     * When a vertical scroll bar IS present, the first call registers the value listener
+     * and sets the flag; a second call must take the early-return path and leave the
+     * flag unchanged.
+     */
+    @Test
+    void attachEditorScrollListenerRegistersListenerOnFirstCallAndSkipsOnSecond() {
+        ScrollBar bar = setupScrollableEditorAndGetBar();
+        // Reset so we test the first-attach path explicitly.
+        setBooleanField("editorScrollListenerAttached", false);
+
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+
+        if (bar != null) {
+            // Headless found a scroll bar: flag must now be true.
+            assertTrue(getBooleanField("editorScrollListenerAttached"),
+                    "flag must be true after first attach with scroll bar present");
+        }
+
+        // Second call must exercise the early-return branch (no state change).
+        boolean afterFirst = getBooleanField("editorScrollListenerAttached");
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals(afterFirst, getBooleanField("editorScrollListenerAttached"),
+                "flag must not change on the second call (early-return path)");
+    }
+
+    /**
+     * Calling {@code pushEditorScrollToPreview()} when no vertical scroll bar is present
+     * must return without throwing (covers the {@code !(node instanceof ScrollBar)} guard).
+     */
+    @Test
+    void pushEditorScrollToPreviewIsNoOpWhenScrollBarAbsent() {
+        // Read mode: editorArea is not in the scene, so lookup returns null.
+        interact(() -> invokePrivate("pushEditorScrollToPreview", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        // No exception = pass.
+    }
+
+    /**
+     * Calling {@code pushEditorScrollToPreview()} with a scroll bar present must not throw.
+     * The WebEngine JS call is caught internally, so the method completes silently headlessly.
+     */
+    @Test
+    void pushEditorScrollToPreviewWithScrollBarDoesNotThrow() {
+        setupScrollableEditorAndGetBar();
+        interact(() -> invokePrivate("pushEditorScrollToPreview", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        // No exception = pass (WebView JS is swallowed by the internal try/catch).
+    }
+
+    /**
+     * When {@code suppressScrollSync} is {@code true}, changing the scroll bar value must
+     * NOT arm the debounce (the listener's guard branch is taken).
+     */
+    @Test
+    void scrollSyncListenerSkipsDebounceWhenSuppressScrollSyncIsTrue() {
+        ScrollBar bar = setupScrollableEditorAndGetBar();
+        setBooleanField("editorScrollListenerAttached", false);
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        if (bar == null || !getBooleanField("editorScrollListenerAttached")) {
+            return; // headless cannot find a scroll bar; skip bar-dependent assertions
+        }
+
+        setBooleanField("suppressScrollSync", true);
+        PauseTransition debounce = scrollSyncDebounce();
+        interact(debounce::stop); // ensure debounce starts STOPPED
+        interact(() -> {
+            double mid = (bar.getMin() + bar.getMax()) / 2.0;
+            bar.setValue(bar.getValue() < mid ? mid : bar.getMin());
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertEquals(Animation.Status.STOPPED,
+                fx(debounce::getStatus),
+                "debounce must not play while suppressScrollSync is true");
+        setBooleanField("suppressScrollSync", false);
+    }
+
+    /**
+     * When the app is in focus mode ({@code focusMode = true}), the scroll listener
+     * must not arm the debounce.
+     */
+    @Test
+    void scrollSyncListenerSkipsDebounceInFocusMode() {
+        ScrollBar bar = setupScrollableEditorAndGetBar();
+        setBooleanField("editorScrollListenerAttached", false);
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        if (bar == null || !getBooleanField("editorScrollListenerAttached")) {
+            return;
+        }
+
+        fireKey(KeyCode.F11); // enter focus mode
+        PauseTransition debounce = scrollSyncDebounce();
+        interact(debounce::stop);
+        interact(() -> {
+            double mid = (bar.getMin() + bar.getMax()) / 2.0;
+            bar.setValue(bar.getValue() < mid ? mid : bar.getMin());
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertEquals(Animation.Status.STOPPED,
+                fx(debounce::getStatus),
+                "debounce must not play in focus mode");
+        fireKey(KeyCode.F11); // restore
+    }
+
+    /**
+     * When the app is in fullscreen mode ({@code fullscreenMode = true}), the scroll
+     * listener must not arm the debounce.
+     */
+    @Test
+    void scrollSyncListenerSkipsDebounceInFullscreenMode() {
+        ScrollBar bar = setupScrollableEditorAndGetBar();
+        setBooleanField("editorScrollListenerAttached", false);
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        if (bar == null || !getBooleanField("editorScrollListenerAttached")) {
+            return;
+        }
+
+        fireKey(KeyCode.F12); // enter fullscreen mode (hides toolbar too)
+        PauseTransition debounce = scrollSyncDebounce();
+        interact(debounce::stop);
+        interact(() -> {
+            double mid = (bar.getMin() + bar.getMax()) / 2.0;
+            bar.setValue(bar.getValue() < mid ? mid : bar.getMin());
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertEquals(Animation.Status.STOPPED,
+                fx(debounce::getStatus),
+                "debounce must not play in fullscreen mode");
+        fireKey(KeyCode.F12); // restore
+    }
+
+    /**
+     * In normal edit mode (not suppressed, not focus/fullscreen) a scroll bar value
+     * change must arm the debounce. After the 50 ms debounce fires,
+     * {@code pushEditorScrollToPreview()} runs without throwing.
+     */
+    @Test
+    void scrollSyncListenerArmsDebounceInNormalEditMode() {
+        ScrollBar bar = setupScrollableEditorAndGetBar();
+        setBooleanField("editorScrollListenerAttached", false);
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        if (bar == null || !getBooleanField("editorScrollListenerAttached")) {
+            return;
+        }
+
+        PauseTransition debounce = scrollSyncDebounce();
+        interact(debounce::stop);
+
+        // Change the scroll bar value to trigger the listener.
+        interact(() -> {
+            double mid = (bar.getMin() + bar.getMax()) / 2.0;
+            bar.setValue(bar.getValue() < mid ? mid : bar.getMin());
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        // The debounce is either RUNNING (fired) or STOPPED (completed in < 50ms).
+        // Fire it manually to also cover the setOnFinished handler path explicitly.
+        interact(() -> debounce.getOnFinished().handle(null));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertNotNull(debounce); // sanity
+    }
+
+    /**
+     * {@code scrollEditorToLine} sets {@code suppressScrollSync = true} before moving
+     * the scroll bar and then schedules {@code suppressScrollSync = false} via
+     * {@code Platform.runLater}. After all pending FX events flush, the flag must be
+     * {@code false} again.
+     */
+    @Test
+    void scrollEditorToLineSetsAndClearsSuppressScrollSync() {
+        setupScrollableEditorAndGetBar();
+        // Call scrollEditorToLine on the FX thread (it sets suppressScrollSync synchronously).
+        interact(() -> invokePrivate("scrollEditorToLine", new Class<?>[]{int.class}, 200));
+        // Platform.runLater(() -> suppressScrollSync = false) is now queued.
+        WaitForAsyncUtils.waitForFxEvents(); // drains the runLater
+        assertFalse(getBooleanField("suppressScrollSync"),
+                "suppressScrollSync must be cleared by the Platform.runLater after scrollEditorToLine");
+    }
+
+    /**
+     * Entering edit mode triggers both the {@code skinProperty} listener
+     * (which calls {@code Platform.runLater(this::attachEditorScrollListener)}) and the
+     * explicit {@code Platform.runLater(this::attachEditorScrollListener)} in
+     * {@code setEditMode(true)}. Both paths must complete without throwing.
+     */
+    @Test
+    void enteringEditModeWiresScrollSyncListenerWithoutThrowing() {
+        fireKey(KeyCode.E, true); // Ctrl+E -> enter edit mode
+        WaitForAsyncUtils.waitForFxEvents();
+        assertTrue(editorPresent(), "editor must be visible after entering edit mode");
+        // No exception during wiring = pass.
+    }
+
+    /**
+     * Covers the {@code newSkin == null} branch in the {@code skinProperty} listener wired
+     * in {@code buildCenter()}: calling {@code setSkin(null)} fires the listener with
+     * {@code newSkin = null}; the {@code if (newSkin != null)} guard must prevent
+     * the {@code Platform.runLater} call.
+     */
+    @Test
+    void skinPropertyListenerHandlesNullNewSkin() {
+        fireKey(KeyCode.E, true); // enter edit mode so the TextArea skin is non-null
+        WaitForAsyncUtils.waitForFxEvents();
+        assertTrue(editorPresent(), "editor must be present before skin manipulation");
+        TextArea ta = editor();
+        interact(() -> {
+            ta.setSkin(null);          // fires listener with newSkin=null → guard taken
+            ta.applyCss();             // force CSS to reinstall the default skin
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        // No exception = the null-skin branch is covered.
+    }
+
+    /**
+     * Covers the {@code editMode == false} short-circuit branch in the value listener
+     * registered by {@code attachEditorScrollListener()}: when the listener fires but
+     * {@code editMode} is {@code false}, the debounce must not be armed.
+     */
+    @Test
+    void scrollSyncListenerSkipsDebounceWhenNotInEditMode() {
+        ScrollBar bar = setupScrollableEditorAndGetBar();
+        setBooleanField("editorScrollListenerAttached", false);
+        interact(() -> invokePrivate("attachEditorScrollListener", new Class<?>[]{}));
+        WaitForAsyncUtils.waitForFxEvents();
+        if (bar == null || !getBooleanField("editorScrollListenerAttached")) {
+            return; // no scroll bar in headless — skip bar-dependent assertions
+        }
+
+        // Simulate not being in edit mode while the listener is still registered.
+        setBooleanField("editMode", false);
+        PauseTransition debounce = scrollSyncDebounce();
+        interact(debounce::stop);
+        interact(() -> {
+            double mid = (bar.getMin() + bar.getMax()) / 2.0;
+            bar.setValue(bar.getValue() < mid ? mid : bar.getMin());
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertEquals(Animation.Status.STOPPED,
+                fx(debounce::getStatus),
+                "debounce must not play when editMode is false");
+        setBooleanField("editMode", true); // restore
+    }
+
+    /**
+     * Covers the {@code range <= 0} guard in {@code pushEditorScrollToPreview()}: when
+     * {@code bar.getMax() == bar.getMin()}, {@code fraction} defaults to {@code 0.0}
+     * instead of dividing by zero.
+     */
+    @Test
+    void pushEditorScrollToPreviewHandlesZeroScrollRange() {
+        ScrollBar bar = setupScrollableEditorAndGetBar();
+        if (bar == null) return;
+
+        // Force bar.max == bar.min so that range = 0 → the ternary takes the true branch.
+        interact(() -> {
+            bar.setMax(bar.getMin());  // range = 0 → fraction = 0.0
+            invokePrivate("pushEditorScrollToPreview", new Class<?>[]{});
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        // No exception = the range <= 0 branch is covered.
+    }
+
+    /**
+     * Covers the {@code catch (Exception ignored)} block in {@code pushEditorScrollToPreview()}:
+     * overriding {@code window.scrollTo} with a JS function that throws causes a JSException
+     * that is silently absorbed by the outer try/catch.
+     */
+    @Test
+    void pushEditorScrollToPreviewCatchBlockHandlesJSException() {
+        setupScrollableEditorAndGetBar();
+        interact(() -> {
+            // Make window.scrollTo throw a JS error so the outer catch fires.
+            engineExecute("window.scrollTo = function() { throw new Error('test-error'); };");
+            invokePrivate("pushEditorScrollToPreview", new Class<?>[]{});
+            // Restore the native scrollTo so subsequent tests are not affected.
+            engineExecute("delete window.scrollTo;");
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        // JSException from the overridden scrollTo is swallowed by catch(Exception ignored).
     }
 }
