@@ -283,7 +283,9 @@ class SettingsModalTest extends ApplicationTest {
     void editorFontSizeDefaultsToFourteenWhenUnset() {
         PREFS.remove("editorFontSize");
         MainView mv = fx(() -> new MainView(new Stage()));
-        assertEquals("-fx-font-size: 14px;", editorStyle(mv));
+        // applyEditorFontSize() now includes both font-family and font-size.
+        assertTrue(editorStyle(mv).contains("-fx-font-size: 14px"),
+                "default font size should be 14px in the editor style");
     }
 
     @Test

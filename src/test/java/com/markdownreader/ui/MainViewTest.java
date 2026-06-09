@@ -1,9 +1,11 @@
 package com.markdownreader.ui;
 
 import com.markdownreader.markdown.Heading;
+import javafx.application.Platform;
 import javafx.event.Event;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollBar;
@@ -11,6 +13,7 @@ import javafx.scene.control.TextArea;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
 import org.junit.jupiter.api.Test;
@@ -26,6 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
+import java.util.prefs.Preferences;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -741,6 +745,191 @@ class MainViewTest extends ApplicationTest {
         assertNotNull(fx(() -> root.getCenter()));
     }
 
+    // -------------------------------------------- settings persistence (new)
+
+    /**
+     * The theme preference "DARK" must cause a freshly constructed MainView to apply
+     * the "theme-dark" style class to its root — verifying the happy-path branch of
+     * the try-block in the constructor (line: {@code this.theme = Theme.valueOf(savedTheme)}).
+     */
+    @Test
+    void themeRestoredAsDarkOnConstruction() {
+        Preferences testPrefs = Preferences.userNodeForPackage(MainView.class);
+        String saved = testPrefs.get("theme", null);
+        try {
+            testPrefs.put("theme", "DARK");
+            MainView[] holder = new MainView[1];
+            // Use a fresh Stage so the shared stage is not affected.
+            interact(() -> holder[0] = new MainView(new Stage()));
+            WaitForAsyncUtils.waitForFxEvents();
+            BorderPane freshRoot = (BorderPane) holder[0].getRoot();
+            assertTrue(fx(() -> freshRoot.getStyleClass().contains("theme-dark")),
+                    "DARK pref should cause the new MainView to apply theme-dark");
+        } finally {
+            if (saved == null) testPrefs.remove("theme");
+            else testPrefs.put("theme", saved);
+        }
+    }
+
+    /**
+     * An unrecognized theme name in prefs must trigger the {@code catch(IllegalArgumentException)}
+     * branch and fall back to the LIGHT theme.
+     */
+    @Test
+    void themeRestoredDefaultsToLightForInvalidPrefValue() {
+        Preferences testPrefs = Preferences.userNodeForPackage(MainView.class);
+        String saved = testPrefs.get("theme", null);
+        try {
+            testPrefs.put("theme", "BOGUS_THEME_NOT_VALID");
+            MainView[] holder = new MainView[1];
+            interact(() -> holder[0] = new MainView(new Stage()));
+            WaitForAsyncUtils.waitForFxEvents();
+            BorderPane freshRoot = (BorderPane) holder[0].getRoot();
+            assertTrue(fx(() -> freshRoot.getStyleClass().contains("theme-light")),
+                    "Invalid theme pref must fall back to LIGHT via the catch block");
+        } finally {
+            if (saved == null) testPrefs.remove("theme");
+            else testPrefs.put("theme", saved);
+        }
+    }
+
+    /**
+     * The {@code editorFontFamily} field must be initialised from the
+     * {@code "editorFontFamily"} preference on construction.
+     */
+    @Test
+    void editorFontFamilyRestoredFromPreferencesOnConstruction() {
+        Preferences testPrefs = Preferences.userNodeForPackage(MainView.class);
+        String saved = testPrefs.get("editorFontFamily", null);
+        String testFamily = "Arial";
+        try {
+            testPrefs.put("editorFontFamily", testFamily);
+            MainView[] holder = new MainView[1];
+            interact(() -> holder[0] = new MainView(new Stage()));
+            WaitForAsyncUtils.waitForFxEvents();
+            assertEquals(testFamily, getStringFieldFrom(holder[0], "editorFontFamily"),
+                    "editorFontFamily must be loaded from the pref on construction");
+        } finally {
+            if (saved == null) testPrefs.remove("editorFontFamily");
+            else testPrefs.put("editorFontFamily", saved);
+        }
+    }
+
+    /**
+     * {@code toggleTheme()} must persist the new theme name to the {@code "theme"} preference
+     * (verifying the {@code prefs.put("theme", theme.name())} line added by this feature).
+     */
+    @Test
+    void toggleThemePersistsThemeNameToPreferences() {
+        Preferences testPrefs = Preferences.userNodeForPackage(MainView.class);
+        String savedPref = testPrefs.get("theme", null);
+        boolean wasDark = fx(() -> root.getStyleClass().contains("theme-dark"));
+        String expectedAfterToggle = wasDark ? "LIGHT" : "DARK";
+        try {
+            fireKey(KeyCode.T, true); // Ctrl+T → toggleTheme()
+            assertEquals(expectedAfterToggle, testPrefs.get("theme", null),
+                    "toggleTheme must persist the toggled theme name to prefs");
+        } finally {
+            fireKey(KeyCode.T, true); // toggle back so other tests see the original theme
+            if (savedPref == null) testPrefs.remove("theme");
+            else testPrefs.put("theme", savedPref);
+        }
+    }
+
+    /**
+     * {@code applyEditorFontSize()} must produce an inline style that contains both
+     * {@code -fx-font-family} and a pixel {@code -fx-font-size} — the new style body
+     * added to this method in this feature.
+     */
+    @Test
+    void applyEditorFontSizeStyleContainsBothFamilyAndSize() {
+        TextArea ea = getEditorArea();
+        String style = fx(ea::getStyle);
+        assertTrue(style.contains("-fx-font-family"),
+                "editor inline style must include -fx-font-family");
+        assertTrue(style.contains("-fx-font-size"),
+                "editor inline style must include -fx-font-size");
+        assertTrue(style.contains("px"),
+                "editor inline style font-size must use px units");
+    }
+
+    /**
+     * Covers all branches of the font-family ComboBox listener inside {@code openSettings()}:
+     * <ul>
+     *   <li>Guard branch 1: {@code val == null} → listener returns early without changes.</li>
+     *   <li>Guard branch 2: {@code val.isBlank()} → listener returns early without changes.</li>
+     *   <li>Happy path: valid family → {@code editorFontFamily} field updated, pref persisted,
+     *       and {@code applyEditorFontSize()} called (style reflects the new family).</li>
+     * </ul>
+     * The settings dialog is opened asynchronously via {@code Platform.runLater} so that
+     * {@code showAndWait()} runs in its nested FX event loop without blocking the test thread.
+     */
+    @Test
+    void openSettingsFontFamilyComboListenerCoversAllBranches() {
+        Preferences testPrefs = Preferences.userNodeForPackage(MainView.class);
+        String savedPref = testPrefs.get("editorFontFamily", null);
+        String originalFamily = getStringField("editorFontFamily");
+        String newFamily = Font.getFamilies().stream()
+                .filter(f -> !f.equalsIgnoreCase(originalFamily))
+                .findFirst()
+                .orElse("Arial");
+        try {
+            // Open settings asynchronously — showAndWait() enters a nested FX event loop
+            // while the test thread (and Platform.runLater tasks) continue to execute.
+            Platform.runLater(() -> invokePrivate("openSettings", new Class<?>[0]));
+            WaitForAsyncUtils.waitForFxEvents();
+
+            // The settings dialog is now showing. Find its ComboBox (only one in any scene).
+            @SuppressWarnings("unchecked")
+            ComboBox<String> combo =
+                    (ComboBox<String>) lookup(".combo-box").query();
+            assertNotNull(combo, "ComboBox must be present in the settings dialog");
+
+            // ── guard branch 1: null value ─ listener must return early ──────
+            interact(() -> combo.setValue(null));
+            WaitForAsyncUtils.waitForFxEvents();
+            assertEquals(originalFamily, getStringField("editorFontFamily"),
+                    "null value must not update editorFontFamily (null guard return)");
+
+            // ── guard branch 2: blank value ─ isBlank() guard must fire ──────
+            interact(() -> combo.setValue("   "));
+            WaitForAsyncUtils.waitForFxEvents();
+            assertEquals(originalFamily, getStringField("editorFontFamily"),
+                    "blank value must not update editorFontFamily (isBlank guard return)");
+
+            // ── happy path: valid non-blank family ─ all listener body lines ──
+            interact(() -> combo.setValue(newFamily));
+            WaitForAsyncUtils.waitForFxEvents();
+            assertEquals(newFamily, getStringField("editorFontFamily"),
+                    "valid family must update the editorFontFamily field");
+            assertEquals(newFamily, testPrefs.get("editorFontFamily", null),
+                    "valid family must be persisted to the editorFontFamily pref");
+            String style = fx(getEditorArea()::getStyle);
+            assertTrue(style.contains(newFamily),
+                    "applyEditorFontSize() must include the new family in the editor style");
+            assertTrue(style.contains("px"),
+                    "applyEditorFontSize() must include a pixel font-size in the editor style");
+
+            // Close the settings dialog by closing its Stage directly (lookup(".primary-button")
+            // is ambiguous — the welcome screen also has a primary-button).
+            interact(() -> javafx.stage.Window.getWindows().stream()
+                    .filter(w -> w instanceof Stage && w != stage)
+                    .map(w -> (Stage) w)
+                    .filter(Stage::isShowing)
+                    .findFirst()
+                    .ifPresent(Stage::close));
+            WaitForAsyncUtils.waitForFxEvents();
+
+        } finally {
+            // Restore the pref and the live field so subsequent tests are unaffected.
+            if (savedPref == null) testPrefs.remove("editorFontFamily");
+            else testPrefs.put("editorFontFamily", savedPref);
+            setStringField("editorFontFamily", originalFamily);
+            interact(() -> invokePrivate("applyEditorFontSize", new Class<?>[0]));
+            WaitForAsyncUtils.waitForFxEvents();
+        }
+    }
+
     // ----------------------------------------------------- reflection helpers
 
     private static Class<?> scrollModeClass() {
@@ -822,6 +1011,50 @@ class MainViewTest extends ApplicationTest {
 
     private static void assertClose(double expected, double actual) {
         org.junit.jupiter.api.Assertions.assertEquals(expected, actual, 1e-9);
+    }
+
+    /** Reads a String field from the shared {@link #mainView} by reflection. */
+    private String getStringField(String name) {
+        try {
+            Field f = MainView.class.getDeclaredField(name);
+            f.setAccessible(true);
+            return (String) f.get(mainView);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Reads a String field from an arbitrary {@link MainView} instance by reflection. */
+    private String getStringFieldFrom(MainView mv, String name) {
+        try {
+            Field f = MainView.class.getDeclaredField(name);
+            f.setAccessible(true);
+            return (String) f.get(mv);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Sets a String field on the shared {@link #mainView} by reflection. */
+    private void setStringField(String name, String value) {
+        try {
+            Field f = MainView.class.getDeclaredField(name);
+            f.setAccessible(true);
+            f.set(mainView, value);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Returns the (always-present) {@code editorArea} TextArea from {@link #mainView}. */
+    private TextArea getEditorArea() {
+        try {
+            Field f = MainView.class.getDeclaredField("editorArea");
+            f.setAccessible(true);
+            return (TextArea) f.get(mainView);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // -------------------------------------------------- in-page anchor navigation
