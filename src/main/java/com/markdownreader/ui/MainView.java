@@ -27,6 +27,7 @@ import javafx.scene.control.ScrollBar;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.text.Font;
 import javafx.scene.input.DragEvent;
@@ -53,6 +54,7 @@ import java.io.IOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.prefs.Preferences;
@@ -138,6 +140,24 @@ public final class MainView {
      */
     private double pendingScrollRatio = -1;
 
+    // ─── Find-bar state ───────────────────────────────────────────────────────
+    /** The overlay bar shown when the user presses Ctrl+F. */
+    private HBox findBar;
+    /** Text input inside the find bar. */
+    private TextField findField;
+    /** Label showing match count (e.g. "3/12" or "No matches"). */
+    private Label findMatchLabel;
+    /** Whether the find bar is currently visible. */
+    private boolean findBarVisible = false;
+    /** All match ranges [start, end) found in the editor for the current query. */
+    private List<int[]> editorFindMatches = new ArrayList<>();
+    /** Index into {@link #editorFindMatches} for the currently highlighted match (-1 = none). */
+    private int editorFindIndex = -1;
+    /** Total occurrences found in the preview for the current query (0 = not yet computed). */
+    private int previewFindTotal = 0;
+    /** 1-based index of the currently highlighted preview match (0 = not yet positioned). */
+    private int previewFindIndex = 0;
+
     /** How the scroll position should be preserved across a preview reload. */
     private enum ScrollMode {
         /** Reset to the top of the document. */
@@ -194,7 +214,13 @@ public final class MainView {
         toolbar = buildToolbar();
         statusBar = buildStatusBar();
         root.setTop(toolbar);
-        root.setCenter(buildCenter());
+        // Wrap the center split together with the (initially hidden) find bar in a VBox
+        // so the bar docks at the top of the content area when opened.
+        Node centerContent = buildCenter();
+        Node findBarNode = buildFindBar();
+        VBox centerWrapper = new VBox(findBarNode, centerContent);
+        VBox.setVgrow(centerContent, Priority.ALWAYS);
+        root.setCenter(centerWrapper);
         root.setLeft(buildSidebar());
         root.setBottom(statusBar);
     }
@@ -322,6 +348,56 @@ public final class MainView {
         bar.setPadding(new Insets(5, 14, 5, 14));
         bar.setAlignment(Pos.CENTER_LEFT);
         return bar;
+    }
+
+    /**
+     * Builds the find bar that overlays the top of the content area when Ctrl+F is
+     * pressed. The bar is initially invisible and takes no layout space
+     * ({@code managed=false}). Call {@link #openFindBar()} / {@link #closeFindBar()} to
+     * show or hide it.
+     */
+    private Node buildFindBar() {
+        findField = new TextField();
+        findField.setPromptText("Find…");
+        findField.setPrefWidth(220);
+        findField.getStyleClass().add("find-field");
+
+        findMatchLabel = new Label();
+        findMatchLabel.getStyleClass().add("find-match-label");
+        findMatchLabel.setMinWidth(72);
+
+        Button prevBtn = iconButton("↑", "Previous match  (Shift+Enter)", e -> findPrev());
+        Button nextBtn = iconButton("↓", "Next match  (Enter)", e -> findNext());
+        Button closeBtn = iconButton("✕", "Close find bar  (Escape)", e -> closeFindBar());
+
+        findBar = new HBox(6, findField, findMatchLabel, prevBtn, nextBtn, separator(), closeBtn);
+        findBar.getStyleClass().add("find-bar");
+        findBar.setAlignment(Pos.CENTER_LEFT);
+        findBar.setPadding(new Insets(5, 10, 5, 10));
+        findBar.setVisible(false);
+        findBar.setManaged(false);
+
+        // Live search as the user types
+        findField.textProperty().addListener((obs, old, query) -> onFindQueryChanged(query));
+
+        // Enter = next match, Shift+Enter = previous, Escape = close the bar
+        findField.setOnKeyPressed(e -> {
+            switch (e.getCode()) {
+                case ENTER -> {
+                    if (e.isShiftDown()) findPrev();
+                    else findNext();
+                    e.consume();
+                }
+                case ESCAPE -> {
+                    // Also handled by the scene filter; this is a belt-and-suspenders guard.
+                    closeFindBar();
+                    e.consume();
+                }
+                default -> { /* other keys are handled by the TextField normally */ }
+            }
+        });
+
+        return findBar;
     }
 
     private void showWelcome() {
@@ -1332,6 +1408,229 @@ public final class MainView {
         }
     }
 
+    // ---------------------------------------------------------------- find bar
+
+    /** Shows the find bar and moves keyboard focus to the search field. */
+    private void openFindBar() {
+        findBar.setVisible(true);
+        findBar.setManaged(true);
+        findBarVisible = true;
+        Platform.runLater(() -> {
+            findField.requestFocus();
+            findField.selectAll();
+        });
+        // If there is already a query in the field (bar was used before), re-run it now.
+        String current = findField.getText();
+        if (current != null && !current.isEmpty()) {
+            onFindQueryChanged(current);
+        }
+    }
+
+    /** Hides the find bar and clears any find-related highlights/selection. */
+    private void closeFindBar() {
+        findBar.setVisible(false);
+        findBar.setManaged(false);
+        findBarVisible = false;
+        findMatchLabel.setText("");
+        editorFindMatches.clear();
+        editorFindIndex = -1;
+        previewFindTotal = 0;
+        previewFindIndex = 0;
+        // Clear the WebView text selection so highlighted text is deselected.
+        try {
+            webView.getEngine().executeScript(
+                    "if (window.getSelection) { window.getSelection().removeAllRanges(); }");
+        } catch (Exception ignored) {}
+        // Return focus to the active view.
+        if (editMode && !focusMode) {
+            editorArea.requestFocus();
+        } else {
+            webView.requestFocus();
+        }
+    }
+
+    /**
+     * Called whenever the find-field text changes. Resets all match state and runs a
+     * fresh search in whichever view is currently active.
+     */
+    private void onFindQueryChanged(String query) {
+        editorFindMatches.clear();
+        editorFindIndex = -1;
+        previewFindTotal = 0;
+        previewFindIndex = 0;
+
+        if (query == null || query.isEmpty()) {
+            findMatchLabel.setText("");
+            try {
+                webView.getEngine().executeScript(
+                        "if (window.getSelection) { window.getSelection().removeAllRanges(); }");
+            } catch (Exception ignored) {}
+            return;
+        }
+
+        if (editMode) {
+            searchInEditor(query);
+        } else {
+            searchInPreview(query, false);
+        }
+    }
+
+    // -------------------------------------------------------- editor find
+
+    /**
+     * Finds all case-insensitive occurrences of {@code query} in the editor text,
+     * populates {@link #editorFindMatches}, selects the first match, and updates the
+     * match counter label.
+     */
+    private void searchInEditor(String query) {
+        String text = editorArea.getText();
+        String lowerText = text.toLowerCase();
+        String lowerQuery = query.toLowerCase();
+        int pos = 0;
+        while (true) {
+            int idx = lowerText.indexOf(lowerQuery, pos);
+            if (idx < 0) break;
+            editorFindMatches.add(new int[]{idx, idx + lowerQuery.length()});
+            pos = idx + 1;
+        }
+        if (editorFindMatches.isEmpty()) {
+            findMatchLabel.setText("No matches");
+        } else {
+            editorFindIndex = 0;
+            selectEditorMatch();
+            findMatchLabel.setText("1/" + editorFindMatches.size());
+        }
+    }
+
+    /**
+     * Selects the text range of the match at {@link #editorFindIndex} and scrolls it
+     * into view.
+     */
+    private void selectEditorMatch() {
+        if (editorFindMatches.isEmpty() || editorFindIndex < 0) return;
+        int[] m = editorFindMatches.get(editorFindIndex);
+        editorArea.selectRange(m[0], m[1]);
+        int line = lineOfOffset(editorArea.getText(), m[0]);
+        scrollEditorToLine(line);
+    }
+
+    /** Returns the 0-based line number that contains character offset {@code offset}. */
+    private static int lineOfOffset(String text, int offset) {
+        int line = 0;
+        int bound = Math.min(offset, text.length());
+        for (int i = 0; i < bound; i++) {
+            if (text.charAt(i) == '\n') line++;
+        }
+        return line;
+    }
+
+    /** Moves to the next match in the active view (wraps around). */
+    private void findNext() {
+        String query = findField.getText();
+        if (query == null || query.isEmpty()) return;
+        if (editMode) {
+            if (editorFindMatches.isEmpty()) return;
+            editorFindIndex = (editorFindIndex + 1) % editorFindMatches.size();
+            selectEditorMatch();
+            findMatchLabel.setText((editorFindIndex + 1) + "/" + editorFindMatches.size());
+        } else {
+            searchInPreview(query, false);
+        }
+    }
+
+    /** Moves to the previous match in the active view (wraps around). */
+    private void findPrev() {
+        String query = findField.getText();
+        if (query == null || query.isEmpty()) return;
+        if (editMode) {
+            if (editorFindMatches.isEmpty()) return;
+            editorFindIndex =
+                    (editorFindIndex - 1 + editorFindMatches.size()) % editorFindMatches.size();
+            selectEditorMatch();
+            findMatchLabel.setText((editorFindIndex + 1) + "/" + editorFindMatches.size());
+        } else {
+            searchInPreview(query, true);
+        }
+    }
+
+    // ------------------------------------------------------- preview find
+
+    /**
+     * Searches in the WebView preview using {@code window.find()}, which is the most
+     * reliable navigation API available in JavaFX's embedded WebKit. The total match
+     * count is computed once per query (via a JS text scan) and cached in
+     * {@link #previewFindTotal}. Navigation uses WebKit's native find with
+     * {@code wrapAround=true} so it cycles continuously.
+     *
+     * <p>Caveat: {@code window.find()} is a non-standard legacy API that is available
+     * in WebKit but not in all browsers. It works reliably here because JavaFX embeds
+     * WebKit and this API has been supported there since early versions.
+     *
+     * @param query     the text to search (case-insensitive)
+     * @param backwards {@code true} to move to the previous occurrence
+     */
+    private void searchInPreview(String query, boolean backwards) {
+        try {
+            // Count total matches only when entering a fresh query
+            // (previewFindTotal == 0 means the count has been reset by onFindQueryChanged)
+            if (previewFindTotal == 0) {
+                previewFindTotal = countPreviewMatches(query);
+                // Clear any existing selection so window.find() restarts from document top.
+                webView.getEngine().executeScript(
+                        "if (window.getSelection) { window.getSelection().removeAllRanges(); }");
+            }
+            if (previewFindTotal == 0) {
+                findMatchLabel.setText("No matches");
+                return;
+            }
+            // Pass the query via a JS member variable to avoid any escaping issues.
+            JSObject win = (JSObject) webView.getEngine().executeScript("window");
+            win.setMember("_mdFindQuery", query);
+            Object result = webView.getEngine().executeScript(
+                    "window.find(window._mdFindQuery, false, " + backwards + ", true)");
+            boolean found = Boolean.TRUE.equals(result);
+            if (found) {
+                if (!backwards) {
+                    // Advance index, wrapping from total back to 1.
+                    previewFindIndex = previewFindIndex % previewFindTotal + 1;
+                } else {
+                    // Step backward, wrapping from 1 back to total.
+                    previewFindIndex =
+                            (previewFindIndex - 2 + previewFindTotal) % previewFindTotal + 1;
+                }
+                findMatchLabel.setText(previewFindIndex + "/" + previewFindTotal);
+            } else {
+                findMatchLabel.setText("No matches");
+            }
+        } catch (Exception ex) {
+            findMatchLabel.setText("");
+        }
+    }
+
+    /**
+     * Counts how many times {@code query} (case-insensitive) appears in the preview's
+     * visible text by scanning {@code document.body.innerText} via JavaScript.
+     */
+    private int countPreviewMatches(String query) {
+        try {
+            JSObject win = (JSObject) webView.getEngine().executeScript("window");
+            win.setMember("_mdFindQuery", query);
+            Object result = webView.getEngine().executeScript(
+                    "(function() {"
+                    + "  var text = document.body ? document.body.innerText : '';"
+                    + "  var q = (window._mdFindQuery || '').toLowerCase();"
+                    + "  if (!q) return 0;"
+                    + "  var t = text.toLowerCase();"
+                    + "  var count = 0, start = 0, idx;"
+                    + "  while ((idx = t.indexOf(q, start)) >= 0) { count++; start = idx + 1; }"
+                    + "  return count;"
+                    + "})()");
+            return result instanceof Number n ? n.intValue() : 0;
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
     private void updateStatus(File file, String markdown) {
         int words = markdown.isBlank() ? 0 : markdown.trim().split("\\s+").length;
         int lines = markdown.isEmpty() ? 0 : (int) markdown.lines().count();
@@ -1365,6 +1664,12 @@ public final class MainView {
      * regardless of keyboard layout.
      */
     private void handleShortcut(KeyEvent e) {
+        // Escape closes the find bar regardless of modifier state, before any other check.
+        if (e.getCode() == KeyCode.ESCAPE && findBarVisible) {
+            closeFindBar();
+            e.consume();
+            return;
+        }
         if (e.getCode() == KeyCode.F11 && !e.isShortcutDown() && !e.isAltDown() && !e.isShiftDown()) {
             toggleFocusMode();
             e.consume();
@@ -1376,6 +1681,12 @@ public final class MainView {
             return;
         }
         if (!e.isShortcutDown()) { // Ctrl on Windows/Linux, Cmd on macOS
+            return;
+        }
+        // While the find field has focus, pass all Ctrl+letter events through so the
+        // TextField can handle standard editing shortcuts (Ctrl+A, Ctrl+C, etc.)
+        // and global app shortcuts (Ctrl+O, Ctrl+E, …) do not fire accidentally.
+        if (findBarVisible && findField != null && findField.isFocused()) {
             return;
         }
         switch (e.getCode()) {
@@ -1397,6 +1708,7 @@ public final class MainView {
                 }
                 editorArea.undo();
             }
+            case F -> openFindBar();                             // Ctrl+F
             default -> {
                 return; // not a known shortcut: don't consume the event
             }
