@@ -1,6 +1,5 @@
 package com.markdownreader.ui;
 
-import com.markdownreader.markdown.Heading;
 import com.markdownreader.markdown.HtmlPageBuilder;
 import com.markdownreader.markdown.MarkdownRenderer;
 import com.markdownreader.markdown.RenderResult;
@@ -20,8 +19,6 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
-import javafx.scene.control.ListCell;
-import javafx.scene.control.ListView;
 import javafx.scene.control.Separator;
 import javafx.scene.control.ScrollBar;
 import javafx.scene.control.SplitPane;
@@ -83,10 +80,8 @@ public final class MainView {
 
     private final BorderPane root = new BorderPane();
     private final WebView webView = new WebView();
-    private final ListView<Heading> tocList = new ListView<>();
     private final Label statusLabel = new Label("No document open");
     private final Label zoomLabel = new Label("100%");
-    private final VBox sidebar = new VBox();
     private final StackPane welcomePane = new StackPane();
 
     private final TextArea editorArea = new TextArea();
@@ -99,7 +94,6 @@ public final class MainView {
 
     private final DoubleProperty fontScale = new SimpleDoubleProperty(1.0);
     private Theme theme;
-    private boolean sidebarVisible = true;
     private boolean focusMode = false;
     private boolean fullscreenMode = false;
 
@@ -221,14 +215,12 @@ public final class MainView {
         VBox centerWrapper = new VBox(findBarNode, centerContent);
         VBox.setVgrow(centerContent, Priority.ALWAYS);
         root.setCenter(centerWrapper);
-        root.setLeft(buildSidebar());
         root.setBottom(statusBar);
     }
 
     private Node buildToolbar() {
         Button openBtn = iconButton("📂", "Open document  (Ctrl+O)", e -> openFileDialog());
         Button reloadBtn = iconButton("↻", "Reload  (Ctrl+R)", e -> reloadCurrent());
-        Button sidebarBtn = iconButton("☰", "Show/hide table of contents  (Ctrl+B)", e -> toggleSidebar());
 
         Button newBtn = iconButton("✚", "New document  (Ctrl+N)", e -> newDocument());
         Button editBtn = iconButton("✎", "Edit text  (Ctrl+E)", e -> toggleEditMode());
@@ -263,7 +255,7 @@ public final class MainView {
         title.getStyleClass().add("app-title");
 
         HBox bar = new HBox(8,
-                openBtn, reloadBtn, sidebarBtn,
+                openBtn, reloadBtn,
                 separator(), newBtn, editBtn, saveBtn, focusModeBtn, fullscreenBtn,
                 separator(), collapseAllBtn, expandAllBtn,
                 separator(), zoomOutBtn, zoomLabel, zoomInBtn,
@@ -286,6 +278,9 @@ public final class MainView {
                 // The page just reloaded; re-apply the F12 scrollbar preference so the
                 // injected style survives folding/zoom-driven preview reloads.
                 applyF12Scrollbar();
+                // If the find bar is open in preview mode, re-apply search highlights
+                // because the DOM was fully replaced by the reload.
+                reapplyPreviewFindAfterReload();
             }
         });
 
@@ -318,27 +313,6 @@ public final class MainView {
         centerSplit.getItems().setAll(centerStack);
         centerSplit.getStyleClass().add("editor-split");
         return centerSplit;
-    }
-
-    private Node buildSidebar() {
-        Label header = new Label("Table of Contents");
-        header.getStyleClass().add("sidebar-header");
-
-        tocList.getStyleClass().add("toc-list");
-        tocList.setPlaceholder(new Label("No headings"));
-        tocList.setCellFactory(list -> new TocCell());
-        tocList.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) -> {
-            if (sel != null && !sel.id().isEmpty()) {
-                scrollToAnchor(sel.id());
-            }
-        });
-        VBox.setVgrow(tocList, Priority.ALWAYS);
-
-        sidebar.getChildren().setAll(header, tocList);
-        sidebar.getStyleClass().add("sidebar");
-        sidebar.setPrefWidth(280);
-        sidebar.setMinWidth(220);
-        return sidebar;
     }
 
     private Node buildStatusBar() {
@@ -493,7 +467,6 @@ public final class MainView {
         RenderResult result = renderer.render(folder.displayText(editorArea.getText()));
         String page = pageBuilder.build(result.html(), theme, fontScale.get());
         webView.getEngine().loadContent(page, "text/html");
-        tocList.getItems().setAll(result.headings());
     }
 
     /**
@@ -733,6 +706,8 @@ public final class MainView {
             webView.getEngine().executeScript(PREVIEW_FOLD_JS);
             webView.getEngine().executeScript(PREVIEW_SYNC_JS);
             webView.getEngine().executeScript(ANCHOR_NAV_JS);
+            webView.getEngine().executeScript(PREVIEW_FIND_CSS_JS);
+            webView.getEngine().executeScript(PREVIEW_FIND_SETUP_JS);
         } catch (Exception ignored) {
             // page not ready or scripting unavailable
         }
@@ -962,6 +937,143 @@ public final class MainView {
             + "  var s = document.getElementById('md-hide-sb');"
             + "  if (s && s.parentNode) { s.parentNode.removeChild(s); }"
             + "})();";
+
+    /**
+     * JS that injects a style element with find-highlight colors into the preview.
+     * Injected once per page load (idempotent: guarded by element id {@code md-find-style}).
+     * All matches are painted amber ({@code .md-find-hit}) and the active match is
+     * painted orange with an outline ({@code .md-find-current}).
+     */
+    private static final String PREVIEW_FIND_CSS_JS =
+            "(function() {"
+            + "  if (!document.getElementById('md-find-style')) {"
+            + "    var s = document.createElement('style');"
+            + "    s.id = 'md-find-style';"
+            + "    s.textContent = '.md-find-hit{background:#ffd54f;color:#222;border-radius:2px}"
+            + ".md-find-current{background:#ff9800!important;color:#000!important;"
+            + "border-radius:2px;outline:2px solid #e65100}';"
+            + "    (document.head || document.documentElement).appendChild(s);"
+            + "  }"
+            + "})();";
+
+    /**
+     * JS that installs the DOM-based find engine into the preview page.
+     * Exposes four functions on {@code window}:
+     * <ul>
+     *   <li>{@code _mdFindAll(query)} – clears old highlights, wraps every case-insensitive
+     *       match of {@code query} in {@code <mark class="md-find-hit">}, scrolls to the first
+     *       match, and returns the total match count.</li>
+     *   <li>{@code _mdFindNext()} – advances to the next match (with wrap-around) and returns
+     *       the new 1-based index.</li>
+     *   <li>{@code _mdFindPrev()} – goes back to the previous match (with wrap-around) and
+     *       returns the new 1-based index.</li>
+     *   <li>{@code _mdFindClear()} – removes all highlight marks and normalises the DOM.</li>
+     * </ul>
+     * Text nodes inside {@code <script>}, {@code <style>}, and existing {@code <mark>}
+     * elements are skipped so that code blocks and nested highlights are never corrupted.
+     * The active match always carries the extra class {@code md-find-current} so it can be
+     * styled differently and is scrolled into view with {@code block:'center'}.
+     */
+    private static final String PREVIEW_FIND_SETUP_JS = """
+            (function() {
+              var _hits = [];
+              var _cur = -1;
+              function clearHits() {
+                for (var i = 0; i < _hits.length; i++) {
+                  var m = _hits[i];
+                  if (!m.parentNode) { continue; }
+                  var p = m.parentNode;
+                  while (m.firstChild) { p.insertBefore(m.firstChild, m); }
+                  p.removeChild(m);
+                }
+                if (document.body) { document.body.normalize(); }
+                _hits = [];
+                _cur = -1;
+              }
+              function getTextNodes() {
+                if (!document.body) { return []; }
+                var walker = document.createTreeWalker(document.body, 4, null, false);
+                var nodes = [];
+                var n;
+                while ((n = walker.nextNode())) { nodes.push(n); }
+                return nodes.filter(function(node) {
+                  var p = node.parentNode;
+                  while (p && p.nodeType === 1) {
+                    var tn = p.tagName.toLowerCase();
+                    if (tn === 'script' || tn === 'style' || tn === 'mark') { return false; }
+                    p = p.parentNode;
+                  }
+                  return true;
+                });
+              }
+              function findAll(query) {
+                clearHits();
+                if (!query) { return 0; }
+                var q = query.toLowerCase();
+                var qLen = q.length;
+                var nodes = getTextNodes();
+                for (var i = 0; i < nodes.length; i++) {
+                  var node = nodes[i];
+                  var text = node.nodeValue;
+                  var lower = text.toLowerCase();
+                  var start = 0;
+                  var idx;
+                  var frags = [];
+                  while ((idx = lower.indexOf(q, start)) >= 0) {
+                    if (idx > start) { frags.push(document.createTextNode(text.slice(start, idx))); }
+                    var mark = document.createElement('mark');
+                    mark.className = 'md-find-hit';
+                    mark.textContent = text.slice(idx, idx + qLen);
+                    frags.push(mark);
+                    _hits.push(mark);
+                    start = idx + qLen;
+                  }
+                  if (frags.length > 0) {
+                    if (start < text.length) { frags.push(document.createTextNode(text.slice(start))); }
+                    var parent = node.parentNode;
+                    for (var j = 0; j < frags.length; j++) { parent.insertBefore(frags[j], node); }
+                    parent.removeChild(node);
+                  }
+                }
+                if (_hits.length > 0) {
+                  _cur = 0;
+                  _hits[0].classList.add('md-find-current');
+                  scrollToHit(_hits[0]);
+                }
+                return _hits.length;
+              }
+              function scrollToHit(el) {
+                // JavaFX's embedded WebKit ignores scrollIntoView() with an options
+                // object, so the view never follows the match. Compute the absolute
+                // position and use window.scrollTo (the same mechanism zoom and
+                // scroll-sync use), centring the hit in the viewport.
+                var rect = el.getBoundingClientRect();
+                var top = (window.pageYOffset || document.documentElement.scrollTop || 0);
+                var target = rect.top + top - (window.innerHeight / 2);
+                if (target < 0) { target = 0; }
+                window.scrollTo(0, target);
+              }
+              function moveTo(idx) {
+                if (_hits.length === 0) { return; }
+                if (_cur >= 0 && _cur < _hits.length) { _hits[_cur].classList.remove('md-find-current'); }
+                _cur = ((idx % _hits.length) + _hits.length) % _hits.length;
+                _hits[_cur].classList.add('md-find-current');
+                scrollToHit(_hits[_cur]);
+              }
+              window._mdFindAll = function(q) { return findAll(q); };
+              window._mdFindNext = function() {
+                if (_hits.length === 0) { return 0; }
+                moveTo(_cur + 1);
+                return _cur + 1;
+              };
+              window._mdFindPrev = function() {
+                if (_hits.length === 0) { return 0; }
+                moveTo(_cur - 1);
+                return _cur + 1;
+              };
+              window._mdFindClear = clearHits;
+            })();
+            """;
 
     /**
      * Opens the modal Settings dialog. Each control applies and persists its value
@@ -1302,13 +1414,6 @@ public final class MainView {
         refreshPreview(ScrollMode.RATIO);
     }
 
-    private void toggleSidebar() {
-        sidebarVisible = !sidebarVisible;
-        if (!focusMode) {
-            root.setLeft(sidebarVisible ? sidebar : null);
-        }
-    }
-
     private void toggleFocusMode() {
         setFocusMode(!focusMode);
     }
@@ -1318,8 +1423,6 @@ public final class MainView {
             return;
         }
         focusMode = on;
-        // Sidebar: hidden in focus mode, restored according to sidebarVisible when exiting
-        root.setLeft((!focusMode && sidebarVisible) ? sidebar : null);
         if (focusMode) {
             centerSplit.getItems().remove(editorArea);
         } else if (editMode && !centerSplit.getItems().contains(editorArea)) {
@@ -1350,7 +1453,7 @@ public final class MainView {
 
     /**
      * Enters/exits "total fullscreen": OS fullscreen with every piece of chrome
-     * removed (toolbar, status bar, sidebar and editor), leaving only the rendered
+     * removed (toolbar, status bar and editor), leaving only the rendered
      * Markdown visible. Exiting restores the layout the user had before.
      */
     private void applyFullscreenLayout(boolean on) {
@@ -1369,7 +1472,6 @@ public final class MainView {
         } else {
             root.setTop(toolbar);
             root.setBottom(statusBar);
-            root.setLeft((!focusMode && sidebarVisible) ? sidebar : null);
             if (editMode && !focusMode && !centerSplit.getItems().contains(editorArea)) {
                 centerSplit.getItems().add(0, editorArea);
                 centerSplit.setDividerPositions(0.45);
@@ -1391,20 +1493,6 @@ public final class MainView {
             } else {
                 b.getStyleClass().remove("active");
             }
-        }
-    }
-
-    // ------------------------------------------------------------- helpers
-
-    private void scrollToAnchor(String id) {
-        // Escapes single quotes in the id for JS.
-        String safe = id.replace("\\", "\\\\").replace("'", "\\'");
-        String js = "var el = document.getElementById('" + safe + "');"
-                + "if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }";
-        try {
-            webView.getEngine().executeScript(js);
-        } catch (Exception ignored) {
-            // document still loading
         }
     }
 
@@ -1436,10 +1524,12 @@ public final class MainView {
         editorFindIndex = -1;
         previewFindTotal = 0;
         previewFindIndex = 0;
-        // Clear the WebView text selection so highlighted text is deselected.
+        // Remove find highlights from the preview DOM. Fall back to clearing the text
+        // selection if the DOM-based engine has not been set up yet (e.g. no document).
         try {
             webView.getEngine().executeScript(
-                    "if (window.getSelection) { window.getSelection().removeAllRanges(); }");
+                    "if (typeof window._mdFindClear === 'function') { window._mdFindClear(); }"
+                    + " else if (window.getSelection) { window.getSelection().removeAllRanges(); }");
         } catch (Exception ignored) {}
         // Return focus to the active view.
         if (editMode && !focusMode) {
@@ -1461,9 +1551,11 @@ public final class MainView {
 
         if (query == null || query.isEmpty()) {
             findMatchLabel.setText("");
+            // Remove any preview highlights left by a previous search.
             try {
                 webView.getEngine().executeScript(
-                        "if (window.getSelection) { window.getSelection().removeAllRanges(); }");
+                        "if (typeof window._mdFindClear === 'function') { window._mdFindClear(); }"
+                        + " else if (window.getSelection) { window.getSelection().removeAllRanges(); }");
             } catch (Exception ignored) {}
             return;
         }
@@ -1556,78 +1648,67 @@ public final class MainView {
     // ------------------------------------------------------- preview find
 
     /**
-     * Searches in the WebView preview using {@code window.find()}, which is the most
-     * reliable navigation API available in JavaFX's embedded WebKit. The total match
-     * count is computed once per query (via a JS text scan) and cached in
-     * {@link #previewFindTotal}. Navigation uses WebKit's native find with
-     * {@code wrapAround=true} so it cycles continuously.
+     * Searches the WebView preview using the DOM-based find engine installed by
+     * {@link #PREVIEW_FIND_SETUP_JS}. On the first call for a fresh query
+     * ({@link #previewFindTotal}{@code == 0}), {@code window._mdFindAll} is called to
+     * highlight every case-insensitive occurrence in the rendered HTML and scroll to
+     * the first hit; subsequent calls delegate to {@code window._mdFindNext} /
+     * {@code window._mdFindPrev} for O(1) navigation with wrap-around.
      *
-     * <p>Caveat: {@code window.find()} is a non-standard legacy API that is available
-     * in WebKit but not in all browsers. It works reliably here because JavaFX embeds
-     * WebKit and this API has been supported there since early versions.
+     * <p>The query is passed safely via {@link JSObject#setMember} so no escaping of
+     * quotes or special characters is required. All JS functions return the new 1-based
+     * match index so the counter label always shows "current/total".
      *
      * @param query     the text to search (case-insensitive)
      * @param backwards {@code true} to move to the previous occurrence
      */
     private void searchInPreview(String query, boolean backwards) {
         try {
-            // Count total matches only when entering a fresh query
-            // (previewFindTotal == 0 means the count has been reset by onFindQueryChanged)
             if (previewFindTotal == 0) {
-                previewFindTotal = countPreviewMatches(query);
-                // Clear any existing selection so window.find() restarts from document top.
-                webView.getEngine().executeScript(
-                        "if (window.getSelection) { window.getSelection().removeAllRanges(); }");
-            }
-            if (previewFindTotal == 0) {
-                findMatchLabel.setText("No matches");
-                return;
-            }
-            // Pass the query via a JS member variable to avoid any escaping issues.
-            JSObject win = (JSObject) webView.getEngine().executeScript("window");
-            win.setMember("_mdFindQuery", query);
-            Object result = webView.getEngine().executeScript(
-                    "window.find(window._mdFindQuery, false, " + backwards + ", true)");
-            boolean found = Boolean.TRUE.equals(result);
-            if (found) {
-                if (!backwards) {
-                    // Advance index, wrapping from total back to 1.
-                    previewFindIndex = previewFindIndex % previewFindTotal + 1;
-                } else {
-                    // Step backward, wrapping from 1 back to total.
-                    previewFindIndex =
-                            (previewFindIndex - 2 + previewFindTotal) % previewFindTotal + 1;
+                // Fresh query: highlight all matches and position at the first one.
+                JSObject win = (JSObject) webView.getEngine().executeScript("window");
+                win.setMember("_mdFindQuery", query);
+                Object result = webView.getEngine().executeScript(
+                        "window._mdFindAll(window._mdFindQuery)");
+                previewFindTotal = result instanceof Number n ? n.intValue() : 0;
+                previewFindIndex = previewFindTotal > 0 ? 1 : 0;
+                // When the initial navigation direction is backwards, jump straight to the
+                // last match so Shift+Enter from a fresh bar behaves intuitively.
+                if (backwards && previewFindTotal > 0) {
+                    Object r2 = webView.getEngine().executeScript("window._mdFindPrev()");
+                    if (r2 instanceof Number n2) {
+                        previewFindIndex = n2.intValue();
+                    }
                 }
-                findMatchLabel.setText(previewFindIndex + "/" + previewFindTotal);
             } else {
-                findMatchLabel.setText("No matches");
+                // Navigate within already-highlighted matches.
+                Object result = backwards
+                        ? webView.getEngine().executeScript("window._mdFindPrev()")
+                        : webView.getEngine().executeScript("window._mdFindNext()");
+                if (result instanceof Number n) {
+                    previewFindIndex = n.intValue();
+                }
             }
+            findMatchLabel.setText(
+                    previewFindTotal == 0 ? "No matches" : previewFindIndex + "/" + previewFindTotal);
         } catch (Exception ex) {
             findMatchLabel.setText("");
         }
     }
 
     /**
-     * Counts how many times {@code query} (case-insensitive) appears in the preview's
-     * visible text by scanning {@code document.body.innerText} via JavaScript.
+     * Re-applies the preview search after the rendered page is replaced (zoom, fold or
+     * reload). The DOM-based highlights live in the old document, so the query is run
+     * again from scratch when the find bar is open over the preview. No-op otherwise.
      */
-    private int countPreviewMatches(String query) {
-        try {
-            JSObject win = (JSObject) webView.getEngine().executeScript("window");
-            win.setMember("_mdFindQuery", query);
-            Object result = webView.getEngine().executeScript(
-                    "(function() {"
-                    + "  var text = document.body ? document.body.innerText : '';"
-                    + "  var q = (window._mdFindQuery || '').toLowerCase();"
-                    + "  if (!q) return 0;"
-                    + "  var t = text.toLowerCase();"
-                    + "  var count = 0, start = 0, idx;"
-                    + "  while ((idx = t.indexOf(q, start)) >= 0) { count++; start = idx + 1; }"
-                    + "  return count;"
-                    + "})()");
-            return result instanceof Number n ? n.intValue() : 0;
-        } catch (Exception ex) {
-            return 0;
+    private void reapplyPreviewFindAfterReload() {
+        if (findBarVisible && !editMode && findField != null) {
+            String q = findField.getText();
+            if (q != null && !q.isEmpty()) {
+                previewFindTotal = 0;
+                previewFindIndex = 0;
+                searchInPreview(q, false);
+            }
         }
     }
 
@@ -1697,7 +1778,6 @@ public final class MainView {
             case O -> openFileDialog();
             case R -> reloadCurrent();
             case T -> toggleTheme();
-            case B -> toggleSidebar();
             case E -> toggleEditMode();
             case S -> save();
             case Z -> {
@@ -1785,21 +1865,4 @@ public final class MainView {
         return Math.max(min, Math.min(max, v));
     }
 
-    /** TOC cell with indentation proportional to the heading level. */
-    private static final class TocCell extends ListCell<Heading> {
-        @Override
-        protected void updateItem(Heading item, boolean empty) {
-            super.updateItem(item, empty);
-            if (empty || item == null) {
-                setText(null);
-                setGraphic(null);
-                getStyleClass().removeAll("toc-h1", "toc-h2", "toc-h3", "toc-h4", "toc-h5", "toc-h6");
-            } else {
-                setText(item.text());
-                setPadding(new Insets(4, 8, 4, 8 + (item.level() - 1) * 14));
-                getStyleClass().removeAll("toc-h1", "toc-h2", "toc-h3", "toc-h4", "toc-h5", "toc-h6");
-                getStyleClass().add("toc-h" + Math.min(item.level(), 6));
-            }
-        }
-    }
 }

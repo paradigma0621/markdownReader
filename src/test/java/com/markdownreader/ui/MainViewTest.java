@@ -1,6 +1,5 @@
 package com.markdownreader.ui;
 
-import com.markdownreader.markdown.Heading;
 import javafx.animation.Animation;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
@@ -9,7 +8,6 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
-import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollBar;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
@@ -20,6 +18,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationTest;
@@ -83,6 +82,14 @@ class MainViewTest extends ApplicationTest {
         stage.show();
     }
 
+    @AfterEach
+    void resetPersistedTheme() {
+        // Several tests toggle the theme via Ctrl+T, which persists it (item 8).
+        // Clear it so the shared Preferences node does not leak the theme into other
+        // test classes that assume the default (light) theme on startup.
+        Preferences.userNodeForPackage(MainView.class).remove("theme");
+    }
+
     // ------------------------------------------------------------- helpers
 
     /** Dispatches a key press through the scene so the shortcut filters fire. */
@@ -126,11 +133,6 @@ class MainViewTest extends ApplicationTest {
 
     private Label zoomLabel() {
         return (Label) lookup(".zoom-label").query();
-    }
-
-    @SuppressWarnings("unchecked")
-    private ListView<Heading> toc() {
-        return (ListView<Heading>) lookup(".toc-list").query();
     }
 
     private TextArea editor() {
@@ -180,7 +182,8 @@ class MainViewTest extends ApplicationTest {
     @Test
     void initiallyShowsAllChrome() {
         assertNotNull(fx(() -> root.getTop()), "toolbar should be visible");
-        assertNotNull(fx(() -> root.getLeft()), "sidebar should be visible");
+        // The left index panel was removed (item 11): the left region is always empty.
+        assertNull(fx(() -> root.getLeft()), "there is no left index panel");
         assertNotNull(fx(() -> root.getBottom()), "status bar should be visible");
         assertFalse(fx(() -> root.getStyleClass().contains("fullscreen-mode")));
     }
@@ -191,7 +194,7 @@ class MainViewTest extends ApplicationTest {
 
         assertTrue(fx(() -> stage.isFullScreen()), "stage should be in fullscreen");
         assertNull(fx(() -> root.getTop()), "toolbar should be hidden");
-        assertNull(fx(() -> root.getLeft()), "sidebar should be hidden");
+        assertNull(fx(() -> root.getLeft()), "left region stays empty");
         assertNull(fx(() -> root.getBottom()), "status bar should be hidden");
         assertTrue(fx(() -> root.getStyleClass().contains("fullscreen-mode")));
     }
@@ -203,20 +206,21 @@ class MainViewTest extends ApplicationTest {
 
         assertFalse(fx(() -> stage.isFullScreen()), "stage should leave fullscreen");
         assertNotNull(fx(() -> root.getTop()), "toolbar should be restored");
-        assertNotNull(fx(() -> root.getLeft()), "sidebar should be restored");
+        assertNull(fx(() -> root.getLeft()), "left region stays empty (no index panel)");
         assertNotNull(fx(() -> root.getBottom()), "status bar should be restored");
         assertFalse(fx(() -> root.getStyleClass().contains("fullscreen-mode")));
     }
 
     @Test
-    void f11FocusModeHidesSidebarButKeepsToolbar() {
+    void f11FocusModeKeepsToolbarAndHasNoLeftPanel() {
         fireKey(KeyCode.F11);
-        assertNull(fx(() -> root.getLeft()), "sidebar should be hidden in focus mode");
+        assertNull(fx(() -> root.getLeft()), "no left index panel in focus mode");
         assertNotNull(fx(() -> root.getTop()), "toolbar should remain in focus mode");
         assertNotNull(fx(() -> root.getBottom()), "status bar should remain in focus mode");
 
         fireKey(KeyCode.F11);
-        assertNotNull(fx(() -> root.getLeft()), "sidebar should be restored");
+        assertNull(fx(() -> root.getLeft()), "left region stays empty after leaving focus mode");
+        assertNotNull(fx(() -> root.getTop()), "toolbar restored after leaving focus mode");
     }
 
     @Test
@@ -233,15 +237,36 @@ class MainViewTest extends ApplicationTest {
         assertNotNull(fx(() -> root.getTop()), "toolbar restored after exiting fullscreen");
     }
 
+    // ------------------------------------------------ index panel removal (item 11)
+
+    @Test
+    void leftIndexPanelAndItsButtonAreRemoved() {
+        // Item 11: the table-of-contents index panel and its ☰ toolbar button
+        // were removed entirely.
+        assertNull(fx(() -> root.getLeft()), "there is no left index panel");
+        assertTrue(fx(() -> lookup(".toc-list").queryAll().isEmpty()),
+                "no TOC list node exists in the scene");
+        boolean hasIndexButton = fx(() -> root.lookupAll(".button").stream()
+                .anyMatch(n -> n instanceof Button b && "☰".equals(b.getText())));
+        assertFalse(hasIndexButton, "the index toolbar button was removed");
+    }
+
+    @Test
+    void ctrlBIsANoOpAfterIndexRemoval() {
+        // Ctrl+B used to toggle the index panel; it must now do nothing and not throw.
+        assertNull(fx(() -> root.getLeft()));
+        fireKey(KeyCode.B, true);
+        assertNull(fx(() -> root.getLeft()), "Ctrl+B must not bring back any left panel");
+    }
+
     // ----------------------------------------------------------- open / load
 
     @Test
-    void openFileRendersDocumentPopulatesTocAndStatus() throws Exception {
+    void openFileRendersDocumentAndUpdatesStatus() throws Exception {
         Path file = writeMarkdown("doc.md", "# Title\n\nHello world\n\n## Section\n");
         interact(() -> mainView.openFile(file.toFile()));
         WaitForAsyncUtils.waitForFxEvents();
 
-        assertTrue(fx(() -> toc().getItems().size()) >= 2, "TOC should list the two headings");
         assertTrue(fx(() -> status().getText()).contains(file.toFile().getAbsolutePath()));
         assertTrue(fx(() -> status().getText()).contains("words"));
         assertTrue(fx(() -> stage.getTitle()).contains("doc.md"));
@@ -252,19 +277,6 @@ class MainViewTest extends ApplicationTest {
         interact(() -> mainView.openFile(tempDir.toFile())); // a directory -> IOException
         WaitForAsyncUtils.waitForFxEvents();
         assertTrue(fx(() -> status().getText()).startsWith("Error reading:"));
-    }
-
-    @Test
-    void tocSelectionScrollsToAnchorWithoutError() throws Exception {
-        Path file = writeMarkdown("toc.md", "# Alpha\n\ntext\n\n# Beta\n");
-        interact(() -> mainView.openFile(file.toFile()));
-        WaitForAsyncUtils.waitForFxEvents();
-
-        ListView<Heading> toc = toc();
-        assertTrue(fx(() -> toc.getItems().size()) >= 2);
-        interact(() -> toc.getSelectionModel().select(0));
-        WaitForAsyncUtils.waitForFxEvents();
-        assertNotNull(fx(() -> toc.getSelectionModel().getSelectedItem()));
     }
 
     // --------------------------------------------------------------- editing
@@ -329,7 +341,10 @@ class MainViewTest extends ApplicationTest {
         fireKey(KeyCode.R, true); // Ctrl+R -> reload (clean state)
         WaitForAsyncUtils.waitForFxEvents();
 
-        assertTrue(fx(() -> toc().getItems().size()) >= 2, "reload should pick up the new heading");
+        // The index panel was removed; assert the reload re-rendered (status word count refreshed).
+        assertTrue(fx(() -> status().getText()).contains("words"),
+                "reload should re-render the document and refresh the status bar");
+        assertFalse(fx(() -> status().getText()).startsWith("Error"));
     }
 
     @Test
@@ -418,16 +433,6 @@ class MainViewTest extends ApplicationTest {
         assertEquals("240%", fx(() -> zoomLabel().getText()), "zoom should clamp at MAX_SCALE (240%)");
     }
 
-    // ------------------------------------------------------------- sidebar
-
-    @Test
-    void sidebarToggleHidesAndRestoresTheTableOfContents() {
-        fireKey(KeyCode.B, true); // Ctrl+B
-        assertNull(fx(() -> root.getLeft()), "sidebar hidden after toggle");
-        fireKey(KeyCode.B, true);
-        assertNotNull(fx(() -> root.getLeft()), "sidebar restored after second toggle");
-    }
-
     // ------------------------------------------------------- misc / lifecycle
 
     @Test
@@ -509,13 +514,13 @@ class MainViewTest extends ApplicationTest {
     @Test
     void openAtLineLeavesFocusModeBeforeShowingTheEditor() {
         fireKey(KeyCode.F11); // focus mode, read mode
-        assertNull(fx(() -> root.getLeft()), "sidebar hidden in focus mode");
+        assertNull(fx(() -> root.getLeft()), "no left index panel in focus mode");
 
         interact(() -> bridge().openAtLine(1));
         WaitForAsyncUtils.waitForFxEvents();
 
         assertTrue(editorPresent(), "editor visible after leaving focus mode");
-        assertNotNull(fx(() -> root.getLeft()), "sidebar restored after leaving focus mode");
+        assertNull(fx(() -> root.getLeft()), "left region stays empty after leaving focus mode");
     }
 
     @Test
@@ -1095,8 +1100,9 @@ class MainViewTest extends ApplicationTest {
         });
         WaitForAsyncUtils.waitForFxEvents();
 
-        assertTrue(fx(() -> toc().getItems().size()) >= 2, "both headings should be listed");
         assertTrue(fx(() -> stage.getTitle()).contains("anchor.md"));
+        assertFalse(fx(() -> status().getText()).startsWith("Error"),
+                "the anchor-link wiring installs without error");
     }
 
     /**
@@ -2181,19 +2187,20 @@ class MainViewTest extends ApplicationTest {
         WaitForAsyncUtils.waitForFxEvents();
 
         boolean focused = fx(() -> findTextField().isFocused());
-        boolean sidebarBefore = fx(() -> root.getLeft() != null);
+        boolean editorBefore = editorPresent();
 
-        // Ctrl+B: if guard fired (field is focused) sidebar stays unchanged
-        fireKey(KeyCode.B, true);
-        boolean sidebarAfter = fx(() -> root.getLeft() != null);
+        // Ctrl+E toggles edit mode; if the guard fired (field focused) it is suppressed.
+        // (Ctrl+E is used rather than a persisted setting so the test leaves no global state.)
+        fireKey(KeyCode.E, true);
+        boolean editorAfter = editorPresent();
 
         if (focused) {
-            assertEquals(sidebarBefore, sidebarAfter,
-                    "Ctrl+B must be suppressed while find field has focus");
+            assertEquals(editorBefore, editorAfter,
+                    "Ctrl+E must be suppressed while find field has focus");
         }
-        // Restore sidebar if it was accidentally toggled (headless focus may vary)
-        if (sidebarBefore != sidebarAfter) {
-            fireKey(KeyCode.B, true);
+        // Restore edit-mode state if it was toggled (headless focus handling may vary).
+        if (editorBefore != editorAfter) {
+            fireKey(KeyCode.E, true);
         }
         closeFindBarViaEscape();
     }
@@ -2220,46 +2227,72 @@ class MainViewTest extends ApplicationTest {
 
     @Test
     void previewSearchFoundForwardAdvancesIndex() {
-        // Override window.find to return true so the "found=true, !backwards" branch executes.
+        // Navigate branch (previewFindTotal != 0): override _mdFindNext so the forward
+        // path runs deterministically, independent of the rendered DOM.
         interact(() -> {
-            engineExecute("window._origFind = window.find; window.find = function() { return true; };");
-            setIntField("previewFindTotal", 3);  // skip count phase
-            setIntField("previewFindIndex", 0);
+            engineExecute("window._mdFindNext = function() { return 2; };");
+            setIntField("previewFindTotal", 3);  // skip the fresh-query phase
+            setIntField("previewFindIndex", 1);
             invokePrivate("searchInPreview", new Class<?>[]{String.class, boolean.class}, "test", false);
-            engineExecute("window.find = window._origFind;");
         });
         WaitForAsyncUtils.waitForFxEvents();
 
-        // 0 % 3 + 1 = 1
-        assertEquals(1, getIntField("previewFindIndex"), "forward step should set index to 1");
-        assertEquals("1/3", fx(() -> findMatchLabelNode().getText()));
+        assertEquals(2, getIntField("previewFindIndex"), "forward step should advance the index");
+        assertEquals("2/3", fx(() -> findMatchLabelNode().getText()));
     }
 
     @Test
     void previewSearchFoundBackwardDecrementsIndex() {
-        // Override window.find to return true so the "found=true, backwards" branch executes.
+        // Navigate branch (previewFindTotal != 0): override _mdFindPrev for the backward path.
         interact(() -> {
-            engineExecute("window._origFind = window.find; window.find = function() { return true; };");
+            engineExecute("window._mdFindPrev = function() { return 1; };");
             setIntField("previewFindTotal", 3);
             setIntField("previewFindIndex", 2); // currently at match 2
             invokePrivate("searchInPreview", new Class<?>[]{String.class, boolean.class}, "test", true);
-            engineExecute("window.find = window._origFind;");
         });
         WaitForAsyncUtils.waitForFxEvents();
 
-        // (2 - 2 + 3) % 3 + 1 = 1
         assertEquals(1, getIntField("previewFindIndex"), "backward step should set index to 1");
         assertEquals("1/3", fx(() -> findMatchLabelNode().getText()));
     }
 
     @Test
-    void previewSearchNotFoundShowsNoMatchesLabel() {
-        // Override window.find to return false so the "found=false" branch executes.
+    void previewSearchFreshQueryFoundSetsFirstMatch() {
+        // Fresh-query branch (previewFindTotal == 0): _mdFindAll reports matches, so the
+        // index is positioned at the first hit and the label shows "1/N".
         interact(() -> {
-            engineExecute("window._origFind = window.find; window.find = function() { return false; };");
-            setIntField("previewFindTotal", 3);
+            engineExecute("window._mdFindAll = function(q) { return 4; };");
+            setIntField("previewFindTotal", 0);
             invokePrivate("searchInPreview", new Class<?>[]{String.class, boolean.class}, "test", false);
-            engineExecute("window.find = window._origFind;");
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertEquals(1, getIntField("previewFindIndex"));
+        assertEquals("1/4", fx(() -> findMatchLabelNode().getText()));
+    }
+
+    @Test
+    void previewSearchFreshQueryBackwardsJumpsToLastMatch() {
+        // A fresh query opened with a backward step jumps straight to the last match.
+        interact(() -> {
+            engineExecute("window._mdFindAll = function(q) { return 4; };"
+                    + "window._mdFindPrev = function() { return 4; };");
+            setIntField("previewFindTotal", 0);
+            invokePrivate("searchInPreview", new Class<?>[]{String.class, boolean.class}, "test", true);
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+
+        assertEquals(4, getIntField("previewFindIndex"), "backward-from-fresh jumps to the last match");
+        assertEquals("4/4", fx(() -> findMatchLabelNode().getText()));
+    }
+
+    @Test
+    void previewSearchNotFoundShowsNoMatchesLabel() {
+        // Fresh-query branch where _mdFindAll reports zero matches → "No matches".
+        interact(() -> {
+            engineExecute("window._mdFindAll = function(q) { return 0; };");
+            setIntField("previewFindTotal", 0);
+            invokePrivate("searchInPreview", new Class<?>[]{String.class, boolean.class}, "test", false);
         });
         WaitForAsyncUtils.waitForFxEvents();
 
@@ -2268,8 +2301,8 @@ class MainViewTest extends ApplicationTest {
 
     @Test
     void previewSearchCountZeroShowsNoMatches() {
-        // previewFindTotal starts at 0 → countPreviewMatches runs → on blank page returns 0
-        // → second "previewFindTotal == 0" guard → "No matches"
+        // previewFindTotal starts at 0 → the real _mdFindAll runs against the (blank)
+        // preview and returns 0 → "No matches".
         interact(() -> invokePrivate("searchInPreview",
                 new Class<?>[]{String.class, boolean.class}, "zzz_not_on_page", false));
         WaitForAsyncUtils.waitForFxEvents();
@@ -2279,20 +2312,13 @@ class MainViewTest extends ApplicationTest {
 
     @Test
     void previewSearchExceptionCatchSetsEmptyLabel() {
-        // Make window.find throw so the outer catch block sets label to "".
+        // Make _mdFindAll throw so the outer catch block sets the label to "".
         interact(() -> {
-            try {
-                engineExecute("window._origFind = window.find; "
-                        + "window.find = function() { throw new Error('intentional'); };");
-                setIntField("previewFindTotal", 3); // bypass count phase
-                interact(() -> findMatchLabelNode().setText("sentinel")); // confirm overwrite
-                invokePrivate("searchInPreview",
-                        new Class<?>[]{String.class, boolean.class}, "test", false);
-            } finally {
-                try {
-                    engineExecute("if (window._origFind) window.find = window._origFind;");
-                } catch (Exception ignored) {}
-            }
+            engineExecute("window._mdFindAll = function(q) { throw new Error('intentional'); };");
+            setIntField("previewFindTotal", 0);
+            findMatchLabelNode().setText("sentinel"); // confirm the catch overwrites it
+            invokePrivate("searchInPreview",
+                    new Class<?>[]{String.class, boolean.class}, "test", false);
         });
         WaitForAsyncUtils.waitForFxEvents();
 
@@ -2301,19 +2327,105 @@ class MainViewTest extends ApplicationTest {
     }
 
     @Test
-    void countPreviewMatchesReturnsZeroWhenCalledOffFxThread() {
-        // WebEngine.executeScript throws off the FX thread; the catch block returns 0.
-        Object result = invokePrivate("countPreviewMatches",
-                new Class<?>[]{String.class}, "anything");
-        assertEquals(0, result, "countPreviewMatches must return 0 when executeScript throws");
+    void previewSearchFreshQueryNonNumberResultTreatedAsZero() {
+        // Defensive branch: _mdFindAll returns a non-Number → treated as 0 matches.
+        interact(() -> {
+            engineExecute("window._mdFindAll = function(q) { return 'not-a-number'; };");
+            setIntField("previewFindTotal", 0);
+            invokePrivate("searchInPreview", new Class<?>[]{String.class, boolean.class}, "test", false);
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals("No matches", fx(() -> findMatchLabelNode().getText()));
     }
 
     @Test
-    void countPreviewMatchesReturnsCountOnFxThread() {
-        // On FX thread with no document loaded, innerText is empty → count = 0.
-        int count = fx(() -> (Integer) invokePrivate("countPreviewMatches",
-                new Class<?>[]{String.class}, "zzz_absent"));
-        assertEquals(0, count, "no matches for a query absent from the page");
+    void previewSearchFreshBackwardsNonNumberKeepsFirstIndex() {
+        // Defensive branch: _mdFindPrev returns a non-Number on the fresh-backward path.
+        interact(() -> {
+            engineExecute("window._mdFindAll = function(q) { return 4; };"
+                    + "window._mdFindPrev = function() { return undefined; };");
+            setIntField("previewFindTotal", 0);
+            invokePrivate("searchInPreview", new Class<?>[]{String.class, boolean.class}, "test", true);
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals(1, getIntField("previewFindIndex"), "non-Number prev result leaves index at 1");
+        assertEquals("1/4", fx(() -> findMatchLabelNode().getText()));
+    }
+
+    @Test
+    void previewSearchNavigateNonNumberKeepsIndex() {
+        // Defensive branch: _mdFindNext returns a non-Number during navigation.
+        interact(() -> {
+            engineExecute("window._mdFindNext = function() { return 'x'; };");
+            setIntField("previewFindTotal", 3);
+            setIntField("previewFindIndex", 2);
+            invokePrivate("searchInPreview", new Class<?>[]{String.class, boolean.class}, "test", false);
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals(2, getIntField("previewFindIndex"), "non-Number next result leaves index unchanged");
+        assertEquals("2/3", fx(() -> findMatchLabelNode().getText()));
+    }
+
+    @Test
+    void installPreviewFoldBridgeOffFxThreadIsSwallowed() {
+        // Off the FX thread, executeScript throws; installPreviewFoldBridge's catch swallows it.
+        Object result = invokePrivate("installPreviewFoldBridge", new Class<?>[]{});
+        assertNull(result, "void method returns null and the off-thread error is swallowed");
+    }
+
+    @Test
+    void reapplyPreviewFindRerunsSearchWhenBarOpenWithQuery() {
+        // Simulates a preview reload: with the bar open over the preview and a non-empty
+        // query, the highlights are recomputed from scratch.
+        openFindBarViaShortcut();
+        interact(() -> {
+            findTextField().setText("find");
+            engineExecute("window._mdFindAll = function(q) { return 2; };");
+            invokePrivate("reapplyPreviewFindAfterReload", new Class<?>[]{});
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals("1/2", fx(() -> findMatchLabelNode().getText()));
+        closeFindBarViaEscape();
+    }
+
+    @Test
+    void reapplyPreviewFindIsNoOpWithEmptyQuery() {
+        openFindBarViaShortcut(); // query empty → inner guard skips the re-search
+        interact(() -> {
+            findMatchLabelNode().setText("sentinel");
+            invokePrivate("reapplyPreviewFindAfterReload", new Class<?>[]{});
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals("sentinel", fx(() -> findMatchLabelNode().getText()),
+                "an empty query must not trigger a re-search");
+        closeFindBarViaEscape();
+    }
+
+    @Test
+    void reapplyPreviewFindIsNoOpWhenBarClosed() {
+        // findBarVisible == false → outer guard skips entirely.
+        interact(() -> {
+            findMatchLabelNode().setText("sentinel");
+            invokePrivate("reapplyPreviewFindAfterReload", new Class<?>[]{});
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals("sentinel", fx(() -> findMatchLabelNode().getText()));
+    }
+
+    @Test
+    void reapplyPreviewFindIsNoOpInEditMode() {
+        fireKey(KeyCode.E, true); // enter edit mode → !editMode is false
+        openFindBarViaShortcut();
+        interact(() -> {
+            findTextField().setText("find");
+            findMatchLabelNode().setText("sentinel");
+            invokePrivate("reapplyPreviewFindAfterReload", new Class<?>[]{});
+        });
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals("sentinel", fx(() -> findMatchLabelNode().getText()),
+                "in edit mode the preview re-search is skipped");
+        closeFindBarViaEscape();
+        fireKey(KeyCode.E, true); // leave edit mode
     }
 
     @Test
@@ -2491,11 +2603,11 @@ class MainViewTest extends ApplicationTest {
     void handleShortcutGuardDoesNotFireWhenFindBarClosed() {
         // findBarVisible=false → guard is skipped → switch processes the shortcut normally
         assertFalse(getBooleanField("findBarVisible"), "pre-condition: bar closed");
-        boolean sidebarBefore = fx(() -> root.getLeft() != null);
-        fireKey(KeyCode.B, true); // Ctrl+B should work normally (guard not active)
-        boolean sidebarAfter = fx(() -> root.getLeft() != null);
-        assertNotEquals(sidebarBefore, sidebarAfter, "Ctrl+B should toggle sidebar when find bar is closed");
+        boolean editorBefore = editorPresent();
+        fireKey(KeyCode.E, true); // Ctrl+E should work normally (guard not active)
+        boolean editorAfter = editorPresent();
+        assertNotEquals(editorBefore, editorAfter, "Ctrl+E should toggle edit mode when find bar is closed");
         // Restore
-        fireKey(KeyCode.B, true);
+        fireKey(KeyCode.E, true);
     }
 }
